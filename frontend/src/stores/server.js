@@ -83,7 +83,7 @@ const INSTALL_PHASE_LABELS = {
 }
 
 const TEXT_FILE_EXTENSIONS = new Set([
-  'txt', 'json', 'properties', 'yml', 'yaml', 'toml', 'cfg', 'conf', 'log', 'md'
+  'txt', 'json', 'json5', 'properties', 'yml', 'yaml', 'toml', 'cfg', 'conf', 'log', 'md'
 ])
 
 // Cap on remembered console commands. Old entries fall off the front so a

@@ -16,6 +16,7 @@
     "@fontsource-variable/dm-sans": "^5.2.8",
     "@lezer/highlight": "^1.2.3",
     "codemirror": "^6.0.2",
+    "json5": "^2.2.3",
     "pinia": "^3.0.4",
     "vue": "^3.5.11",
     "vue-i18n": "^11.4.14",

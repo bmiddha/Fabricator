@@ -589,6 +589,12 @@ exist.
 
 **Body:** `{ "path": "server.properties", "content": "..." }`
 
+Content is saved as raw UTF-8 text, not parsed or reformatted. The web editor
+supports `.json5` configs (including comments, trailing commas, single-quoted
+strings and unquoted keys) with JSON5 syntax diagnostics; `.json` files retain
+strict JSON diagnostics. Saving preserves the text rather than serializing it
+as JSON.
+
 **Response (200):** `{ "success": true }`
 **Errors:** `400` path/content missing or invalid · `404` file not found · `500` write failed
 
