@@ -354,7 +354,7 @@ def missing_project_dependencies(server_id, server, project_id):
     server's) and walks its required dependencies against the jars already in
     the mods folder. Returns ``{dependencies: [{projectId, slug, title}]}``.
     """
-    mc_version = request.args.get('mc_version') or server.get('version')
+    mc_version = None if server.get('loader') == 'velocity' else request.args.get('mc_version') or server.get('version')
     loader_facets = _server_loader_facets(server, request.args.get('loader'))
     mods_folder, error = _resolve_mods_folder(server)
     if error:
@@ -422,7 +422,7 @@ def check_mod_updates(server_id, server):
         latest = modrinth_client.get_latest_versions_by_hashes(
             list(by_hash),
             loaders=_server_loader_facets(server, server.get('loader')),
-            game_versions=[server['version']],
+            game_versions=None if server.get('loader') == 'velocity' else [server['version']],
         )
     except ModrinthApiError as exc:
         return _modrinth_error_response(exc)
@@ -451,7 +451,8 @@ def check_mod_updates(server_id, server):
 
     try:
         dependencies = _missing_dependencies(
-            newer_versions, present, _server_loader_facets(server, server.get('loader')), server['version']
+            newer_versions, present, _server_loader_facets(server, server.get('loader')),
+            None if server.get('loader') == 'velocity' else server['version']
         )
     except ModrinthApiError as exc:
         return _modrinth_error_response(exc)
@@ -463,6 +464,8 @@ def search_mods():
     query = request.args.get('query', '')
     mc_version = request.args.get('mc_version')
     loader = request.args.get('loader')
+    if loader == 'velocity':
+        mc_version = None
     # Bukkit-family servers browse Modrinth *plugins* through this same route;
     # only 'mod' and 'plugin' are accepted so a bad value can't reshape the facet.
     project_type = request.args.get('project_type', 'mod')
@@ -560,6 +563,8 @@ def get_project(project_id):
 def get_mod_versions(mod_id):
     loaders = request.args.getlist('loaders')
     game_versions = request.args.getlist('game_versions')
+    if loaders == ['velocity']:
+        game_versions = []
     featured = request.args.get('featured')
 
     featured_bool = None
@@ -582,6 +587,8 @@ def get_mod_versions(mod_id):
 def get_project_versions(project_id):
     loaders = request.args.getlist('loaders')
     game_versions = request.args.getlist('game_versions')
+    if loaders == ['velocity']:
+        game_versions = []
     featured = request.args.get('featured')
 
     featured_bool = None
@@ -613,7 +620,9 @@ def resolve_project_version(project_id):
         if loaders_raw else None
     )
 
-    if not mc_version:
+    if loader == 'velocity' or loaders == ['velocity']:
+        mc_version = None
+    elif not mc_version:
         return jsonify({"error": "mc_version parameter is required"}), 400
 
     try:
@@ -648,7 +657,9 @@ def get_mod_download_url(mod_id):
     mc_version = request.args.get('mc_version')
     loader = request.args.get('loader', 'fabric')
 
-    if not mc_version:
+    if loader == 'velocity':
+        mc_version = None
+    elif not mc_version:
         return jsonify({"error": "mc_version parameter is required"}), 400
 
     try:
@@ -679,6 +690,8 @@ def install_mod(mod_id, server):
     data = request.get_json() or {}
     mc_version = data.get('mc_version')
     loader = data.get('loader', 'fabric')
+    if server.get('loader') == 'velocity':
+        mc_version, loader = None, 'velocity'
     server_id = data.get('server_id')
     mods_folder_override = data.get('mods_folder')
     # #56: name a version instead of taking whatever resolves as newest. Also
@@ -687,7 +700,7 @@ def install_mod(mod_id, server):
     version_id = data.get('version_id')
     replaces = data.get('replaces')
 
-    if not mc_version:
+    if not mc_version and server.get('loader') != 'velocity':
         return jsonify({"error": "mc_version is required"}), 400
 
     if mods_folder_override:
@@ -785,6 +798,8 @@ def _run_modpack_install(server, data, run_install, build_modpack_info, *, log_l
     dict. Returns a Flask response — a bare one on success, a
     ``(body, status)`` tuple on every failure path.
     """
+    if server.get('loader') == 'velocity':
+        return jsonify({'error': 'Minecraft modpacks cannot be installed on Velocity proxies'}), 400
     server_id = data.get('server_id')
     clean_install = _parse_bool(data.get('clean_install'), default=True)
     create_backup = _parse_bool(data.get('create_backup'), default=True)
@@ -945,8 +960,11 @@ def upload_modpack_archive():
         return jsonify({'error': str(exc)}), 400
 
     summary = mrpack.describe(index, temp_path)
+    from backend.auth.permissions import principal
+    user = principal()
     staged = mrpack.stage(
-        temp_path, filename=safe_display, size_bytes=written, summary=summary
+        temp_path, filename=safe_display, size_bytes=written, summary=summary,
+        owner=user.owner if user else None,
     )
     return jsonify({'success': True, **staged.to_payload()}), 201
 
@@ -967,6 +985,8 @@ def discard_modpack_upload(upload_id):
 )
 def install_uploaded_modpack(upload_id, server):
     """Install a previously staged .mrpack onto a server (#53)."""
+    if server.get('loader') == 'velocity':
+        return jsonify({'error': 'Minecraft modpacks cannot be installed on Velocity proxies'}), 400
     data = request.get_json() or {}
     staged = mrpack.get(upload_id)
     if staged is None:

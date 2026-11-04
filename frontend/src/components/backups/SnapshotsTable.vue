@@ -4,6 +4,10 @@ import Panel from '../ui/Panel.vue'
 import { formatFileSize, formatTimestamp } from '../../utils/format'
 import { snapshotDownloadUrl } from '../../api/backups'
 import { t } from '../../i18n'
+import { useAuthStore } from '../../stores/auth'
+
+const auth = useAuthStore()
+const can = (permission) => auth.can(permission, props.serverId)
 
 const props = defineProps({
   snapshots: {
@@ -116,6 +120,7 @@ function downloadHref(snap, format = 'tar') {
           <td class="snapshots-table__td-actions">
             <div class="snapshots-table__actions">
               <button
+                v-if="can('backups.restore')"
                 type="button"
                 class="snapshots-table__action"
                 :disabled="props.busySnapshotId === snap.id"
@@ -129,6 +134,7 @@ function downloadHref(snap, format = 'tar') {
                 <span>{{ $t('backups.table.restore') }}</span>
               </button>
               <a
+                v-if="can('backups.download')"
                 class="snapshots-table__action"
                 :href="downloadHref(snap, 'tar')"
                 :title="$t('backups.table.download', { name: snap.fileName || snap.id })"
@@ -141,6 +147,7 @@ function downloadHref(snap, format = 'tar') {
                 <span>.tar</span>
               </a>
               <a
+                v-if="can('backups.download')"
                 class="snapshots-table__action snapshots-table__action--secondary"
                 :href="downloadHref(snap, 'zip')"
                 :title="$t('backups.table.downloadZip')"
@@ -149,6 +156,7 @@ function downloadHref(snap, format = 'tar') {
                 <span>.zip</span>
               </a>
               <button
+                v-if="can('backups.delete')"
                 type="button"
                 class="snapshots-table__action snapshots-table__action--danger"
                 :disabled="props.busySnapshotId === snap.id"

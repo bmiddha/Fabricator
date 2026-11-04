@@ -9,8 +9,10 @@ import { modrinthProjectUrl } from '../../utils/modrinthUrl'
 import { useServerStore } from '../../stores/server'
 import { isPluginLoader } from '../../utils/loaderKind'
 import { t } from '../../i18n'
+import { useCapabilities } from '../../composables/useCapabilities'
 
 const store = useServerStore()
+const can = useCapabilities()
 
 const onSearch = (event) => { store.modSearch = event.target.value }
 
@@ -63,15 +65,16 @@ const selectAllLabel = computed(() => {
       />
       <div class="mods-page__actions">
         <AppButton
-          v-if="updateCount > 0"
+          v-if="updateCount > 0 && can('mods.install')"
           variant="ghost"
           :loading="store.updatingMods"
           @click="store.updateAllMods"
         >
           {{ tk('mods.updateMods', 'mods.updatePlugins', updateCount) }}
         </AppButton>
-        <AppButton v-if="!isPlugin" variant="ghost" @click="store.openModpackBrowser">{{ $t('mods.browseModpacks') }}</AppButton>
+        <AppButton v-if="!isPlugin && can('modpacks.install')" variant="ghost" @click="store.openModpackBrowser">{{ $t('mods.browseModpacks') }}</AppButton>
         <AppButton
+          v-if="can('mods.install')"
           variant="primary"
           :loading="store.isInstalling"
           @click="store.openModBrowser"
@@ -129,12 +132,12 @@ const selectAllLabel = computed(() => {
       </div>
     </Panel>
 
-    <Panel :title="tk('mods.installedMods', 'mods.installedPlugins')" :padded="false">
+    <Panel v-if="can('mods.read')" :title="tk('mods.installedMods', 'mods.installedPlugins')" :padded="false">
       <!-- Selection toolbar. Present whenever there is a list to act on, so the
            checkbox is somewhere predictable instead of appearing only once a
            selection exists; it picks up the accent treatment when one does. -->
       <div
-        v-if="!store.modsLoading && store.filteredMods.length > 0"
+        v-if="!store.modsLoading && store.filteredMods.length > 0 && (can('mods.toggle') || can('mods.delete'))"
         class="mods-page__bulk-bar"
         :class="{ 'is-active': store.selectedCount > 0 }"
       >
@@ -157,7 +160,7 @@ const selectAllLabel = computed(() => {
             {{ $t('common.clear') }}
           </button>
           <AppButton
-            v-if="store.selectedDisabledCount > 0"
+            v-if="store.selectedDisabledCount > 0 && can('mods.toggle')"
             variant="ghost"
             :loading="store.togglingMods"
             @click="store.setSelectedModsEnabled(true)"
@@ -165,7 +168,7 @@ const selectAllLabel = computed(() => {
             {{ $t('mods.enableCount', { n: store.selectedDisabledCount }) }}
           </AppButton>
           <AppButton
-            v-if="store.selectedEnabledCount > 0"
+            v-if="store.selectedEnabledCount > 0 && can('mods.toggle')"
             variant="ghost"
             :loading="store.togglingMods"
             @click="store.setSelectedModsEnabled(false)"
@@ -173,6 +176,7 @@ const selectAllLabel = computed(() => {
             {{ $t('mods.disableCount', { n: store.selectedEnabledCount }) }}
           </AppButton>
           <AppButton
+            v-if="can('mods.delete')"
             variant="danger"
             :loading="store.bulkDeleting"
             @click="store.handleBulkRemoveMods"
@@ -200,6 +204,7 @@ const selectAllLabel = computed(() => {
         >
           <template #lead>
             <label
+              v-if="can('mods.toggle') || can('mods.delete')"
               class="mods-page__item-checkbox-label"
               :aria-label="$t('mods.select', { name: installedModDisplayName(mod) })"
             >
@@ -229,7 +234,7 @@ const selectAllLabel = computed(() => {
               </svg>
             </a>
             <button
-              v-if="modrinthProjectUrl(mod) && !mod.disabled"
+              v-if="modrinthProjectUrl(mod) && !mod.disabled && can('mods.install')"
               type="button"
               class="mods-page__version-btn"
               :title="$t('mods.changeVersion', { name: installedModDisplayName(mod) })"
@@ -237,7 +242,7 @@ const selectAllLabel = computed(() => {
             >
               {{ $t('mods.version') }}
             </button>
-            <button type="button" class="mods-page__remove" @click="store.handleRemoveMod(mod)">{{ $t('common.remove') }}</button>
+            <button v-if="can('mods.delete')" type="button" class="mods-page__remove" @click="store.handleRemoveMod(mod)">{{ $t('common.remove') }}</button>
           </div>
         </SearchResultCard>
       </div>

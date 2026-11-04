@@ -12,6 +12,7 @@ import { useSidebarCollapsed } from '../../composables/useSidebarCollapsed'
 import { useMobileNav } from '../../composables/useMobileNav'
 import { loaderContentKind, contentLabel } from '../../utils/loaderKind'
 import { t } from '../../i18n'
+import { canVisit } from '../../utils/permissions'
 
 const { collapsed, toggle: toggleCollapsed } = useSidebarCollapsed()
 const { isMobile, drawerOpen, close: closeDrawer } = useMobileNav()
@@ -46,8 +47,12 @@ const auth = useAuthStore()
 const router = useRouter()
 
 async function onLock() {
-  await auth.logout()
-  router.push({ name: 'Login' })
+  try {
+    await auth.logout()
+    router.push({ name: 'Login' })
+  } catch (error) {
+    toast.error(error.message, t('common.error'))
+  }
 }
 
 const serverId = computed(() => route.params.id)
@@ -86,6 +91,7 @@ const ALL_NAV_ITEMS = [
 
 // Nav entries hidden under managed mode (surfaces the fleet gate denies).
 const MANAGED_HIDDEN_NAV = new Set(['ServerBackups', 'ServerPlayit'])
+const PROXY_HIDDEN_NAV = new Set(['ServerPlayers', 'ServerBackups'])
 
 // The add-on tab (ServerMods) is hidden for Vanilla (no add-on surface) and
 // relabelled "Plugins" for Bukkit-family loaders (Paper/Purpur/Folia/Pufferfish),
@@ -96,10 +102,12 @@ const navItems = computed(() => {
   const base = auth.managed
     ? ALL_NAV_ITEMS.filter(item => !MANAGED_HIDDEN_NAV.has(item.name))
     : ALL_NAV_ITEMS
-  const items = kind === 'none' ? base.filter(item => item.name !== 'ServerMods') : base
-  return items.map(item => ({
+  const applicable = loader === 'velocity' ? base.filter(item => !PROXY_HIDDEN_NAV.has(item.name)) : base
+  const items = kind === 'none' ? applicable.filter(item => item.name !== 'ServerMods') : applicable
+  return items.filter(item => canVisit(auth, item.name, serverId.value)).map(item => ({
     ...item,
-    label: item.name === 'ServerMods' ? contentLabel(loader) : t(item.label)
+    label: item.name === 'ServerMods' ? contentLabel(loader)
+      : item.name === 'ServerSettings' && loader === 'velocity' ? t('velocity.title') : t(item.label)
   }))
 })
 
@@ -172,7 +180,7 @@ const stopUpdatePoll = () => {
 }
 
 const updateAvailable = computed(() =>
-  Boolean(updateState.value.updateAvailable) &&
+  auth.can('updates.apply') && Boolean(updateState.value.updateAvailable) &&
   !updateState.value.inProgress &&
   !updateState.value.selfUpdateDisabled
 )
@@ -244,7 +252,7 @@ const runUpdate = async () => {
 onMounted(async () => {
   // Managed: the self-update probe is gate-denied (silent recurring 403); do
   // not fetch or arm either poll cadence.
-  if (auth.managed) return
+  if (auth.managed || !auth.can('updates.read')) return
   await loadUpdateState()
   scheduleNextPoll()
 })
@@ -318,7 +326,7 @@ onUnmounted(() => {
 
     <ServerSwitcher v-if="hasServerContext" />
     <button
-      v-else-if="!auth.managed"
+      v-else-if="!auth.managed && auth.can('servers.create')"
       type="button"
       class="app-sidebar__no-server-chip"
       :title="railTitle($t('sidebar.noServersTitle'))"
@@ -424,7 +432,7 @@ onUnmounted(() => {
       </button>
 
       <component
-        v-if="!auth.managed"
+        v-if="!auth.managed && auth.can('updates.read')"
         :is="updateAvailable ? 'button' : 'div'"
         :type="updateAvailable ? 'button' : undefined"
         class="app-sidebar__update-pill"

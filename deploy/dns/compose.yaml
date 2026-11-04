@@ -1,0 +1,98 @@
+# Opt-in only. Choose exactly one profile: cloudflare OR powerdns.
+name: fabricator-dns
+
+x-webhook: &webhook
+  build:
+    context: ../../dns-provider
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  ports:
+    - "127.0.0.1:${DNS_WEBHOOK_PORT:-8888}:8888"
+  networks: [dns-control]
+  stop_grace_period: 20s
+
+x-pdns-image: &pdns-image powerdns/pdns-auth-51:5.1.5@sha256:77ff4efdbb9ec30e9309c8a1cbed6121a67fa3be25c848bbbfa756fc75bf9a27
+
+services:
+  dns-cloudflare:
+    <<: *webhook
+    profiles: [cloudflare]
+    environment:
+      DNS_PROVIDER: cloudflare
+      DNS_LISTEN: ":8888"
+      DNS_ZONES: "${DNS_ZONE:?set DNS_ZONE to an authoritative zone}"
+      DNS_DOMAIN_FILTER: "${DNS_DOMAIN_FILTER:-${DNS_ZONE}}"
+      CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN:-}"
+
+  powerdns:
+    image: *pdns-image
+    profiles: [powerdns]
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/start-powerdns.sh"]
+    environment:
+      PDNS_AUTH_API_KEY: "${POWERDNS_API_KEY:-}"
+    command:
+      - --local-address=0.0.0.0
+      - --local-port=5353
+      - --webserver-port=8081
+      - --webserver-loglevel=none
+      - --allow-axfr-ips=
+      - --default-soa-edit=INCEPTION-INCREMENT
+    ports:
+      - "${DNS_BIND_ADDRESS:-0.0.0.0}:${DNS_PUBLIC_PORT:-53}:5353/tcp"
+      - "${DNS_BIND_ADDRESS:-0.0.0.0}:${DNS_PUBLIC_PORT:-53}:5353/udp"
+    volumes:
+      - powerdns-data:/var/lib/powerdns
+      - ./start-powerdns.sh:/start-powerdns.sh:ro
+    networks: [dns-control]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "pdns_control", "rping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  powerdns-bootstrap:
+    image: *pdns-image
+    profiles: [powerdns]
+    entrypoint: ["python3", "/bootstrap.py"]
+    environment:
+      POWERDNS_API_URL: http://powerdns:8081
+      POWERDNS_API_KEY: "${POWERDNS_API_KEY:-}"
+      DNS_ZONE: "${DNS_ZONE:?set DNS_ZONE to an authoritative zone}"
+      DNS_NAMESERVERS: "${DNS_NAMESERVERS:-}"
+      DNS_SOA_MAILBOX: "${DNS_SOA_MAILBOX:-}"
+    volumes:
+      - ./bootstrap.py:/bootstrap.py:ro
+    networks: [dns-control]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      powerdns:
+        condition: service_healthy
+
+  dns-powerdns:
+    <<: *webhook
+    profiles: [powerdns]
+    environment:
+      DNS_PROVIDER: powerdns
+      DNS_LISTEN: ":8888"
+      DNS_ZONES: "${DNS_ZONE:?set DNS_ZONE to an authoritative zone}"
+      DNS_DOMAIN_FILTER: "${DNS_DOMAIN_FILTER:-${DNS_ZONE}}"
+      POWERDNS_API_URL: http://powerdns:8081
+      POWERDNS_API_KEY: "${POWERDNS_API_KEY:-}"
+      POWERDNS_SERVER_ID: localhost
+    depends_on:
+      powerdns-bootstrap:
+        condition: service_completed_successfully
+
+networks:
+  dns-control:
+    name: "${DNS_NETWORK_NAME:-fabricator-dns-control}"
+
+volumes:
+  powerdns-data:

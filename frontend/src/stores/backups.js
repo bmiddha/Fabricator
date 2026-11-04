@@ -29,6 +29,7 @@ import {
   uploadWorld
 } from '../api/backups'
 import { useServerStore } from './server'
+import { useAuthStore } from './auth'
 import { useToast } from '../composables/useToast'
 import { t } from '../i18n'
 
@@ -176,6 +177,12 @@ export const useBackupsStore = defineStore('backups', () => {
   // ---------- Helpers ----------
 
   const serverId = computed(() => serverStore.currentServerId)
+  function requestScope() {
+    const id = serverId.value
+    const auth = useAuthStore()
+    const revision = auth.revision
+    return () => id === serverId.value && revision === auth.revision
+  }
 
   const sortedConfigs = computed(() => {
     return [...configs.value].sort((a, b) => {
@@ -214,43 +221,52 @@ export const useBackupsStore = defineStore('backups', () => {
   // ---------- Loaders ----------
 
   async function loadConfigs() {
-    if (!serverId.value) return
+    if (!serverId.value || !useAuthStore().can('backups.config.read', serverId.value)) return
+    const isCurrent = requestScope()
     configsLoading.value = true
     try {
       const list = await listBackupConfigs(serverId.value)
+      if (!isCurrent()) return
       configs.value = Array.isArray(list) ? list : []
     } catch (err) {
+      if (!isCurrent()) return
       console.error('Failed to load backup configs:', err)
       error.value = err?.message || t('backups.config.loadFailed')
     } finally {
-      configsLoading.value = false
+      if (isCurrent()) configsLoading.value = false
     }
   }
 
   async function loadSnapshots() {
-    if (!serverId.value) return
+    if (!serverId.value || !useAuthStore().can('backups.list', serverId.value)) return
+    const isCurrent = requestScope()
     snapshotsLoading.value = true
     try {
       const list = await listSnapshots(serverId.value)
+      if (!isCurrent()) return
       snapshots.value = Array.isArray(list) ? list : []
     } catch (err) {
+      if (!isCurrent()) return
       console.error('Failed to load snapshots:', err)
       error.value = err?.message || t('backups.snapshotsLoadFailed')
     } finally {
-      snapshotsLoading.value = false
+      if (isCurrent()) snapshotsLoading.value = false
     }
   }
 
   async function loadSummary() {
-    if (!serverId.value) return
+    if (!serverId.value || !useAuthStore().can('backups.list', serverId.value)) return
+    const isCurrent = requestScope()
     summaryLoading.value = true
     try {
-      summary.value = await getBackupSummary(serverId.value)
+      const data = await getBackupSummary(serverId.value)
+      if (isCurrent()) summary.value = data
     } catch (err) {
+      if (!isCurrent()) return
       console.error('Failed to load backup summary:', err)
       // Summary failures are non-critical — keep the page usable.
     } finally {
-      summaryLoading.value = false
+      if (isCurrent()) summaryLoading.value = false
     }
   }
 
@@ -292,6 +308,7 @@ export const useBackupsStore = defineStore('backups', () => {
   }
 
   async function saveConfigDraft() {
+    const isCurrent = requestScope()
     if (!serverId.value || savingConfig.value) return
     const payload = draftToPayload(draft.value)
     if (!payload.name) {
@@ -303,9 +320,11 @@ export const useBackupsStore = defineStore('backups', () => {
     try {
       if (editingConfigId.value) {
         await updateBackupConfig(serverId.value, editingConfigId.value, payload)
+        if (!isCurrent()) return
         toast.success(t('backups.config.updated'), t('nav.backups'))
       } else {
         await createBackupConfig(serverId.value, payload)
+        if (!isCurrent()) return
         toast.success(t('backups.config.created'), t('nav.backups'))
       }
       showManagePanel.value = false
@@ -313,6 +332,7 @@ export const useBackupsStore = defineStore('backups', () => {
       draft.value = DEFAULT_CONFIG_DRAFT()
       await Promise.all([loadConfigs(), loadSummary()])
     } catch (err) {
+      if (!isCurrent()) return
       console.error('Failed to save backup config:', err)
       draftError.value = err?.message || t('backups.config.saveFailed')
     } finally {
@@ -341,11 +361,13 @@ export const useBackupsStore = defineStore('backups', () => {
    * toast so the user can see what's still on disk.
    */
   async function confirmDeleteConfig({ purge }) {
+    const isCurrent = requestScope()
     if (!serverId.value || !configToDelete.value || deletingConfig.value) return
     const config = configToDelete.value
     deletingConfig.value = true
     try {
       const res = await deleteBackupConfig(serverId.value, config.id, { purge })
+      if (!isCurrent()) return
       const deletedFiles = res?.deleted_files ?? 0
       const retainedFiles = res?.retained_files ?? 0
       const retainedPaths = Array.isArray(res?.retained_paths) ? res.retained_paths : []
@@ -362,6 +384,7 @@ export const useBackupsStore = defineStore('backups', () => {
       configToDelete.value = null
       await Promise.all([loadConfigs(), loadSnapshots(), loadSummary()])
     } catch (err) {
+      if (!isCurrent()) return
       console.error('Failed to delete backup config:', err)
       toast.error(err?.message || t('backups.config.deleteFailed'), t('nav.backups'))
     } finally {
@@ -376,11 +399,13 @@ export const useBackupsStore = defineStore('backups', () => {
   // ---------- Run backup (manual) ----------
 
   async function runBackup(configId) {
+    const isCurrent = requestScope()
     if (!serverId.value || !configId) return
     if (runningConfigId.value) return // one manual run at a time per view
     runningConfigId.value = configId
     try {
       const res = await runBackupConfig(serverId.value, configId)
+      if (!isCurrent()) return
       const jobId = res?.job_id
       if (!jobId) {
         toast.error(t('backups.job.noJobId'), t('nav.backups'))
@@ -397,6 +422,7 @@ export const useBackupsStore = defineStore('backups', () => {
       startJobPolling()
       toast.info(t('backups.job.started'), t('nav.backups'))
     } catch (err) {
+      if (!isCurrent()) return
       console.error('Failed to start backup:', err)
       toast.error(err?.message || t('backups.job.startFailed'), t('nav.backups'))
     } finally {
@@ -418,9 +444,11 @@ export const useBackupsStore = defineStore('backups', () => {
   }
 
   async function runQuickBackup({ storagePath, compress, flush, shutdown }) {
+    const isCurrent = requestScope()
     if (!serverId.value) return
     try {
       const res = await runQuickBackupApi(serverId.value, { storagePath, compress, flush, shutdown })
+      if (!isCurrent()) return
       const jobId = res?.job_id
       if (!jobId) {
         toast.error(t('backups.job.quickNoJobId'), t('nav.backups'))
@@ -438,6 +466,7 @@ export const useBackupsStore = defineStore('backups', () => {
       startJobPolling()
       toast.info(t('backups.job.quickStarted'), t('nav.backups'))
     } catch (err) {
+      if (!isCurrent()) return
       console.error('Failed to start quick backup:', err)
       toast.error(err?.message || t('backups.job.quickStartFailed'), t('nav.backups'))
     }
@@ -466,15 +495,17 @@ export const useBackupsStore = defineStore('backups', () => {
    * replaced — the modal warns about both before the user gets here.
    */
   async function importWorld(file) {
+    const isCurrent = requestScope()
     if (!serverId.value || !file) return
     if (importUploading.value || activeJob.value?.active) return
     importUploading.value = true
     importUploadPct.value = 0
     try {
       const res = await uploadWorld(serverId.value, file, {
-        onProgress: (pct) => { importUploadPct.value = pct },
+        onProgress: (pct) => { if (isCurrent()) importUploadPct.value = pct },
         registerAbort: (abort) => { importAbort = abort }
       })
+      if (!isCurrent()) return
       const jobId = res?.job_id
       if (!jobId) {
         toast.error(t('backups.job.importNoJobId'), t('nav.backups'))
@@ -492,6 +523,7 @@ export const useBackupsStore = defineStore('backups', () => {
       startJobPolling()
       toast.info(t('backups.job.importStarted'), t('nav.backups'))
     } catch (err) {
+      if (!isCurrent()) return
       // A user-initiated cancel surfaces as status 0 / "Upload cancelled".
       if (err?.message === t('errors.uploadCancelled')) {
         toast.info(t('errors.uploadCancelled'), t('nav.backups'))
@@ -520,10 +552,12 @@ export const useBackupsStore = defineStore('backups', () => {
   }
 
   async function confirmRestore(mode) {
+    const isCurrent = requestScope()
     if (!serverId.value || !snapshotToRestore.value) return
     const snap = snapshotToRestore.value
     try {
       const res = await restoreSnapshot(serverId.value, snap.id, mode)
+      if (!isCurrent()) return
       const jobId = res?.job_id
       if (!jobId) {
         toast.error(t('backups.job.restoreNoJobId'), t('nav.backups'))
@@ -543,6 +577,7 @@ export const useBackupsStore = defineStore('backups', () => {
       snapshotToRestore.value = null
       toast.info(mode === 'reset' ? t('backups.job.restoreResetStarted') : t('backups.job.restoreStarted'), t('nav.backups'))
     } catch (err) {
+      if (!isCurrent()) return
       console.error('Failed to start restore:', err)
       toast.error(err?.message || t('backups.job.restoreStartFailed'), t('nav.backups'))
     }
@@ -597,12 +632,14 @@ export const useBackupsStore = defineStore('backups', () => {
 
   async function pollJob() {
     const job = activeJob.value
+    const isCurrent = requestScope()
     if (!job?.id) {
       stopJobPolling()
       return
     }
     try {
       const status = await getBackupJob(job.id)
+      if (!isCurrent() || activeJob.value?.id !== job.id) return
       // Merge so we don't lose the locally-tracked kind/configId/snapshotId.
       activeJob.value = {
         ...job,
@@ -627,12 +664,13 @@ export const useBackupsStore = defineStore('backups', () => {
         // Keep activeJob around briefly so the UI can render the final
         // phase ("done"/"failed"), then drop it on the next tick.
         setTimeout(() => {
-          if (activeJob.value && !activeJob.value.active) {
+          if (isCurrent() && activeJob.value?.id === job.id && !activeJob.value.active) {
             activeJob.value = null
           }
         }, 1500)
       }
     } catch (err) {
+      if (!isCurrent()) return
       console.error('Failed to poll backup job:', err)
       // Soft-fail: stop polling rather than spam errors.
       stopJobPolling()
@@ -663,6 +701,11 @@ export const useBackupsStore = defineStore('backups', () => {
 
   function resetState() {
     stopJobPolling()
+    importAbort?.()
+    loading.value = false
+    configsLoading.value = false
+    snapshotsLoading.value = false
+    summaryLoading.value = false
     configs.value = []
     snapshots.value = []
     summary.value = null

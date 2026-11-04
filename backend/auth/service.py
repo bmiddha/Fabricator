@@ -380,7 +380,7 @@ def _hash_secret(secret: str) -> str:
     return hashlib.sha256(secret.encode("utf-8")).hexdigest()
 
 
-def create_token(name: str, scope: str) -> dict:
+def create_token(name: str, scope: str, *, owner: dict | None = None) -> dict:
     """Mint an MCP token; return its metadata PLUS the one-time full token.
 
     The returned ``token`` (``fab_<id>_<secret>``) is the ONLY time the secret
@@ -413,6 +413,8 @@ def create_token(name: str, scope: str) -> dict:
             "created_at": created,
             "last_used_at": None,
         }
+        if owner is not None:
+            tokens[token_id]["owner"] = dict(owner)
         block["tokens"] = tokens
         block.setdefault("enabled", False)
         data[_MCP_KEY] = block
@@ -492,6 +494,8 @@ def list_tokens() -> list:
                 "last_used_at": entry.get("last_used_at"),
             }
         )
+        if isinstance(entry.get("owner"), dict):
+            out[-1]["owner"] = dict(entry["owner"])
     out.sort(key=lambda t: (t.get("created_at") or "", t.get("id") or ""))
     return out
 

@@ -10,10 +10,13 @@ import { useAuthStore } from '../../stores/auth'
 import { deleteServerIcon, getInstalledJava, getJavaStatus, getLoaderGameVersions, getServerInstallProgress, setServerIcon, upgradeServer } from '../../api/servers'
 import { useToast } from '../../composables/useToast'
 import { t } from '../../i18n'
+import { useCapabilities } from '../../composables/useCapabilities'
+import VelocityPanel from '../../components/settings/VelocityPanel.vue'
 
 const store = useServerStore()
 const auth = useAuthStore()
 const toast = useToast()
+const can = useCapabilities()
 
 // Server icon (#85). Saved immediately rather than with the form: it's a file,
 // not a server.properties key. The img's own load/error says whether one exists.
@@ -49,7 +52,7 @@ function removeIcon() {
 // First-stage migrations are deliberately limited to jar-only server types.
 // Fabric/Forge/NeoForge need per-mod compatibility resolution before they can
 // be safely offered here.
-const canUpgrade = computed(() => ['vanilla', 'paper'].includes(store.server?.loader))
+const canUpgrade = computed(() => can('server.upgrade') && ['vanilla', 'paper'].includes(store.server?.loader))
 const upgradeVersions = ref([])
 const targetUpgradeVersion = ref('')
 const upgradeStarting = ref(false)
@@ -263,8 +266,9 @@ const javaAutoHint = computed(() =>
 )
 
 onMounted(async () => {
-  if (auth.managed) return
+  if (auth.managed || store.server?.loader === 'velocity') return
   await loadUpgradeVersions()
+  if (!auth.can('java.read')) return
   try {
     const payload = await getInstalledJava()
     installedJava.value = Array.isArray(payload?.managed) ? payload.managed : []
@@ -312,9 +316,10 @@ const onReset = () => {
 </script>
 
 <template>
-  <div class="settings-page" v-if="store.serverSettings">
+  <VelocityPanel v-if="store.server?.loader === 'velocity'" :key="store.currentServerId" />
+  <div class="settings-page" v-else-if="store.serverSettings">
     <div class="settings-page__guard" v-if="!store.canEditSettings">
-      {{ $t('properties.guard') }}
+      {{ $t(can('server.settings.read') && can('server.settings.write') ? 'properties.guard' : 'access.settingsReadOnly') }}
     </div>
 
     <Panel v-if="canUpgrade && !auth.managed" :title="$t('properties.upgrade.title')">
@@ -345,6 +350,13 @@ const onReset = () => {
       </div>
     </Panel>
 
+    <Panel v-if="!can('server.settings.read') && can('server.icon.write')" :title="$t('properties.identity.icon')">
+      <AppButton :loading="iconBusy" @click="iconInput.click()">{{ $t('properties.icon.upload') }}</AppButton>
+      <AppButton :disabled="iconBusy" @click="removeIcon">{{ $t('common.remove') }}</AppButton>
+      <input ref="iconInput" type="file" accept="image/*" hidden @change="onIconPicked" />
+    </Panel>
+
+    <template v-if="can('server.settings.read')">
     <Panel :title="$t('properties.mode.title')">
       <div class="settings-page__mode">
         <div>
@@ -384,7 +396,7 @@ const onReset = () => {
                   :aria-label="`${$t('properties.identity.icon')}: ${hasIcon ? $t('properties.icon.change') : $t('properties.icon.upload')}`"
                   :title="$t('properties.identity.iconHint')"
                   :aria-describedby="describedBy"
-                  :disabled="iconBusy"
+                  :disabled="iconBusy || !can('server.icon.write')"
                   @click="iconInput.click()"
                 >
                   <img v-show="hasIcon" :src="iconUrl" alt="" @load="hasIcon = true" @error="hasIcon = false" />
@@ -396,7 +408,7 @@ const onReset = () => {
                   </span>
                 </button>
                 <button
-                  v-if="hasIcon"
+                  v-if="hasIcon && can('server.icon.write')"
                   type="button"
                   class="settings-page__icon-remove"
                   :aria-label="`${$t('properties.identity.icon')}: ${$t('common.remove')}`"
@@ -1061,7 +1073,7 @@ const onReset = () => {
 
     <!-- Launch tuning. Hidden in managed mode, where the deployment owns the
          JVM and the settings API rejects both fields outright. -->
-    <Panel v-if="!auth.managed" :title="$t('properties.java.title')">
+    <Panel v-if="!auth.managed && auth.can('java.read')" :title="$t('properties.java.title')">
       <div class="settings-page__notice settings-page__notice--info">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" />
@@ -1336,7 +1348,8 @@ const onReset = () => {
       </div>
     </Panel>
 
-    <Panel v-if="!auth.managed" :title="$t('properties.danger.title')">
+    </template>
+    <Panel v-if="!auth.managed && can('server.delete')" :title="$t('properties.danger.title')">
       <div class="settings-page__danger">
         <p class="settings-page__danger-text">{{ $t('properties.danger.text') }}</p>
         <AppButton variant="danger" :loading="store.deletingServer" @click="store.openDeleteServerModal">
@@ -1345,7 +1358,7 @@ const onReset = () => {
       </div>
     </Panel>
 
-    <footer class="settings-page__footer" :aria-label="$t('properties.footerLabel')">
+    <footer v-if="can('server.settings.write')" class="settings-page__footer" :aria-label="$t('properties.footerLabel')">
       <div class="settings-page__footer-inner">
         <AppButton
           variant="ghost"

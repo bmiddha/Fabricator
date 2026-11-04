@@ -57,7 +57,7 @@ def _start_one(server: Dict[str, object]) -> None:
 
     server_id = str(server.get('id'))
     try:
-        compat = resolve_required_java(str(server.get('version') or ''))
+        compat = resolve_required_java(str(server.get('version') or ''), server.get('loader'))
         required = compat.required_java if compat.enforceable else None
         if skip_java_enforcement():
             required = None

@@ -117,7 +117,7 @@ async function copyAddress() {
 }
 
 onMounted(() => {
-  if (auth.managed) return
+  if (auth.managed || !auth.can('tunnels.read')) return
   _unsubscribePlayit = playit.subscribe()
 })
 
@@ -173,7 +173,7 @@ onUnmounted(() => {
             <p class="pa-lead">{{ $t('playit.lead') }}</p>
             <p class="pa-sub">{{ $t('playit.sub') }}</p>
           </div>
-          <AppButton variant="primary" @click="playit.start">{{ $t('playit.enable') }}</AppButton>
+          <AppButton v-if="auth.can('tunnels.manage')" variant="primary" @click="playit.start">{{ $t('playit.enable') }}</AppButton>
         </div>
 
         <!-- error → danger banner + two actions (no confirm: nothing live) -->
@@ -190,8 +190,8 @@ onUnmounted(() => {
             </div>
           </div>
           <div class="pa-actions">
-            <AppButton variant="ghost" @click="playit.start">{{ $t('playit.tryAgain') }}</AppButton>
-            <AppButton variant="primary" @click="playit.reset">{{ $t('playit.differentAccount') }}</AppButton>
+            <AppButton v-if="auth.can('tunnels.manage')" variant="ghost" @click="playit.start">{{ $t('playit.tryAgain') }}</AppButton>
+            <AppButton v-if="auth.can('tunnels.manage')" variant="primary" @click="playit.reset">{{ $t('playit.differentAccount') }}</AppButton>
           </div>
         </div>
 
@@ -214,8 +214,8 @@ onUnmounted(() => {
             <span>{{ $t('playit.claimStep2') }}</span>
           </div>
           <div class="pa-claiming__actions">
-            <button type="button" class="pa-textbtn" @click="playit.stop">{{ $t('playit.cancelSetup') }}</button>
-            <button type="button" class="pa-textbtn" @click="playit.reset">{{ $t('playit.differentAccount') }}</button>
+            <button v-if="auth.can('tunnels.manage')" type="button" class="pa-textbtn" @click="playit.stop">{{ $t('playit.cancelSetup') }}</button>
+            <button v-if="auth.can('tunnels.manage')" type="button" class="pa-textbtn" @click="playit.reset">{{ $t('playit.differentAccount') }}</button>
           </div>
         </div>
 
@@ -224,8 +224,8 @@ onUnmounted(() => {
           <span class="pa-active__dot" aria-hidden="true"></span>
           <span class="pa-active__text">{{ $t('playit.active') }}</span>
           <div class="pa-active__actions">
-            <button type="button" class="pa-pillbtn" @click="disableTunnel">{{ $t('playit.disable.confirm') }}</button>
-            <button type="button" class="pa-pillbtn" @click="resetTunnel">{{ $t('playit.reset.confirm') }}</button>
+            <button v-if="auth.can('tunnels.manage')" type="button" class="pa-pillbtn" @click="disableTunnel">{{ $t('playit.disable.confirm') }}</button>
+            <button v-if="auth.can('tunnels.manage')" type="button" class="pa-pillbtn" @click="resetTunnel">{{ $t('playit.reset.confirm') }}</button>
           </div>
         </div>
 
@@ -233,7 +233,7 @@ onUnmounted(() => {
         <div v-else class="pa-starting">
           <span class="pa-starting__dot" aria-hidden="true"></span>
           <span class="pa-starting__text">{{ busyText }}</span>
-          <button type="button" class="pa-pillbtn" @click="playit.stop">{{ $t('common.cancel') }}</button>
+          <button v-if="auth.can('tunnels.manage')" type="button" class="pa-pillbtn" @click="playit.stop">{{ $t('common.cancel') }}</button>
         </div>
       </template>
     </Panel>

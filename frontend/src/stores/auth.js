@@ -9,6 +9,10 @@
  */
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
+import { useServerStore } from './server'
+import { useBackupsStore } from './backups'
+import { usePlayersStore } from './players'
+import { usePlayitStore } from './playit'
 import {
   getAuthStatus,
   postLogin,
@@ -29,13 +33,40 @@ export const useAuthStore = defineStore('auth', () => {
   const managed = ref(false)
   const checked = ref(false)
   const loading = ref(false)
+  const oidcMode = ref(false)
+  const providerName = ref('')
+  const user = ref(null)
+  const revision = ref(0)
+
+  function can(permission, serverId = null) {
+    if (!oidcMode.value) return true
+    return Boolean(user.value?.permissions?.includes(permission)
+      || (serverId && user.value?.servers?.[serverId]?.permissions?.includes(permission)))
+  }
+
+  function clearUserData() {
+    revision.value++
+    const servers = useServerStore()
+    servers.resetState()
+    servers.serversList = []
+    servers.currentServerId = null
+    useBackupsStore().resetState()
+    usePlayersStore().resetState()
+    usePlayitStore().clearState()
+    user.value = null
+  }
 
   async function checkStatus() {
     // May throw on network failure — the caller (guard) handles it.
     const status = await getAuthStatus()
+    if (JSON.stringify(user.value) !== JSON.stringify(status.user || null)
+      || oidcMode.value !== (status.auth_mode === 'oidc')) clearUserData()
     enabled.value = Boolean(status.enabled)
     isAuthenticated.value = Boolean(status.authenticated)
     needsSetup.value = Boolean(status.needs_setup)
+    oidcMode.value = status.auth_mode === 'oidc'
+    providerName.value = status.provider_name || 'OpenID Connect'
+    user.value = status.user || null
     // Safe-default idiom (like playit binary_trust / players onlineMode): a
     // missing field defaults to managed, not unmanaged.
     managed.value = status.managed !== false
@@ -114,15 +145,13 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function logout() {
-    try {
-      await postLogout()
-    } catch (_) {
-      // Already logged out / network — local state is what matters.
-    }
+    await postLogout()
+    clearUserData()
     isAuthenticated.value = false
   }
 
   function markUnauthenticated() {
+    clearUserData()
     isAuthenticated.value = false
   }
 
@@ -133,6 +162,11 @@ export const useAuthStore = defineStore('auth', () => {
     managed,
     checked,
     loading,
+    oidcMode,
+    providerName,
+    user,
+    can,
+    revision,
     checkStatus,
     setup,
     login,

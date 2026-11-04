@@ -35,7 +35,7 @@ const orderedServers = computed(() =>
     : [currentServer.value, ...store.serversList]
 )
 
-const canReorder = computed(() => store.serversList.length > 1)
+const canReorder = computed(() => auth.can('servers.reorder') && store.serversList.length > 1)
 
 // Drag to reorder via Pointer Events rather than HTML5 drag-and-drop, which
 // never fires on touch. The list reorders live while dragging; one save on drop.
@@ -148,6 +148,7 @@ const switchTo = (id) => {
 }
 
 const goToAddServer = () => {
+  if (!auth.can('servers.create')) return
   close()
   // Unlike switchTo, this opens a modal instead of navigating, so the mobile
   // drawer won't be dismissed by AppSidebar's route watcher — and the drawer
@@ -240,7 +241,7 @@ onBeforeUnmount(() => {
       <div class="server-switcher__sep"></div>
 
       <button
-        v-if="!auth.managed"
+        v-if="!auth.managed && auth.can('servers.create')"
         type="button"
         class="server-switcher__add"
         @click="goToAddServer"

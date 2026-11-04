@@ -328,6 +328,8 @@ def import_world(server_id, server):
     same-filesystem rename), validated cheaply, then handed to the async
     importer which polls through ``GET /api/backup-jobs/<job_id>``.
     """
+    if str(server.get("loader", "")).lower() == "velocity":
+        return jsonify({"error": "World import is not supported on Velocity proxies"}), 400
     original_name = (
         request.args.get("filename")
         or request.headers.get("X-Filename")

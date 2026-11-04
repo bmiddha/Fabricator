@@ -11,7 +11,7 @@ import { t } from '../i18n'
  * and which browse `project_type` the modal requests.
  */
 
-const PLUGIN_LOADERS = new Set(['paper', 'purpur', 'folia', 'pufferfish'])
+const PLUGIN_LOADERS = new Set(['paper', 'purpur', 'folia', 'pufferfish', 'velocity'])
 const MOD_LOADERS = new Set(['fabric', 'quilt', 'forge', 'neoforge'])
 // Loaders with no add-on surface at all — only these hide the add-on tab.
 const NO_CONTENT_LOADERS = new Set(['vanilla'])
@@ -23,7 +23,8 @@ const PLUGIN_FACETS = {
   paper: ['paper', 'spigot', 'bukkit'],
   purpur: ['purpur', 'paper', 'spigot', 'bukkit'],
   folia: ['folia'],
-  pufferfish: ['paper', 'spigot', 'bukkit']
+  pufferfish: ['paper', 'spigot', 'bukkit'],
+  velocity: ['velocity']
 }
 
 /**

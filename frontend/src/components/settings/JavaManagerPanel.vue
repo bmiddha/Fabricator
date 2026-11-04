@@ -6,8 +6,10 @@ import ConfirmModal from '../modals/ConfirmModal.vue'
 import { getInstalledJava, installJava, getJavaInstallProgress, uninstallJava } from '../../api/servers'
 import { useToast } from '../../composables/useToast'
 import { t } from '../../i18n'
+import { useAuthStore } from '../../stores/auth'
 
 const toast = useToast()
+const auth = useAuthStore()
 
 // Common LTS / Minecraft-relevant majors offered for installation. Adoptium
 // does not ship 16 (mapped to 17 server-side), so it is intentionally omitted.
@@ -79,6 +81,11 @@ const resetInstallState = () => {
 }
 
 const loadInstalled = async () => {
+  if (!auth.can('java.read')) {
+    loading.value = false
+    selectedMajor.value = availableMajors.value[0] ?? null
+    return
+  }
   loading.value = true
   error.value = ''
   try {
@@ -225,6 +232,7 @@ onBeforeUnmount(clearPoll)
             <span class="java-manager__path" :title="entry.path">{{ entry.path }}</span>
           </div>
           <AppButton
+            v-if="auth.can('java.delete')"
             variant="danger"
             size="sm"
             :disabled="installing"
@@ -242,7 +250,7 @@ onBeforeUnmount(clearPoll)
         </li>
       </ul>
 
-      <div class="java-manager__install">
+      <div v-if="auth.can('java.install')" class="java-manager__install">
         <template v-if="installing">
           <div class="java-manager__progress-text">
             <span>{{ $t('java.installing', { major: installMajor }) }}</span>

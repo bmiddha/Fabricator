@@ -157,6 +157,7 @@ import {
   getMissingDependencies
 } from '../../api/modrinth'
 import { useServerStore } from '../../stores/server'
+import { useAuthStore } from '../../stores/auth'
 import { installedEntryMatchesBrowseHit } from '../../utils/modrinthJarMatch'
 import { formatNumber, truncate } from '../../utils/format'
 import { loaderProjectType, loaderModrinthFacets } from '../../utils/loaderKind'
@@ -457,6 +458,10 @@ export default {
 
     /** Warns before installing when required dependencies, at any depth, are missing. */
     async prepareInstall(mod, versionOverride = null) {
+      if (!useAuthStore().can('mods.read', useServerStore().currentServerId)) {
+        this.performInstall(mod, versionOverride)
+        return
+      }
       const preferredVersion = versionOverride || this.mcVersion
       try {
         const { dependencies } = await getMissingDependencies(useServerStore().currentServerId, mod.project_id, {

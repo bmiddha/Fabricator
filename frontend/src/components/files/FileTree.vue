@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { browseServerFiles } from '../../api/servers'
 import { useServerStore } from '../../stores/server'
+import { useAuthStore } from '../../stores/auth'
 import { t } from '../../i18n'
 
 const props = defineProps({
@@ -13,6 +14,7 @@ const props = defineProps({
 const emit = defineEmits(['select'])
 
 const store = useServerStore()
+const auth = useAuthStore()
 
 const ROOT = ''
 
@@ -27,13 +29,14 @@ const STALE_AFTER_MS = 15_000
 const caches = new Map()
 
 function cacheFor(serverId) {
-  let entry = caches.get(serverId)
+  const key = `${auth.revision}:${serverId}`
+  let entry = caches.get(key)
   if (!entry) {
     // Raw Map/Set: the refs below wrap these in reactive proxies, and writes
     // through a proxy land in the underlying object, so the data survives a
     // remount even though the proxy does not.
     entry = { children: new Map(), expanded: new Set(), loadedAt: 0 }
-    caches.set(serverId, entry)
+    caches.set(key, entry)
   }
   return entry
 }
@@ -51,19 +54,24 @@ const error = ref('')
 const pathOf = (entry) => entry.relativePath || entry.name
 
 async function ensureChildren(path, { force = false } = {}) {
-  if (!store.currentServerId) return
+  const id = store.currentServerId
+  const revision = auth.revision
+  const isCurrent = () => id === store.currentServerId && revision === auth.revision
+  if (!id || !auth.can('files.list', id)) return
   if (!force && (childrenByPath.value.has(path) || loadingPaths.value.has(path))) return
   loadingPaths.value.add(path)
   try {
     // The backend already sorts folders first, then by name.
-    const data = await browseServerFiles(store.currentServerId, path ? { path } : {})
+    const data = await browseServerFiles(id, path ? { path } : {})
+    if (!isCurrent()) return
     childrenByPath.value.set(path, data.entries || [])
     cache.loadedAt = Date.now()
     error.value = ''
   } catch (e) {
+    if (!isCurrent()) return
     error.value = e.message || t('files.tree.loadFolderFailed')
   } finally {
-    loadingPaths.value.delete(path)
+    if (isCurrent()) loadingPaths.value.delete(path)
   }
 }
 
@@ -145,7 +153,7 @@ watch(() => props.activePath, (p) => reveal(p), { immediate: true })
 
 // A different server means a different tree — swap to that server's cache
 // rather than showing the previous server's folders.
-watch(() => store.currentServerId, () => {
+watch(() => [store.currentServerId, auth.revision], () => {
   cache = cacheFor(store.currentServerId)
   childrenByPath.value = cache.children
   expanded.value = cache.expanded

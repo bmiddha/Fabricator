@@ -15,11 +15,12 @@ const store = useServerStore()
 const playit = usePlayitStore()
 const prefs = usePreferencesStore()
 const auth = useAuthStore()
+const isVelocity = computed(() => store.server?.loader === 'velocity')
 
 // "Mods" vs "Plugins" for the installed-content panel, per loader.
 const isPlugins = computed(() => isPluginLoader(store.server?.loader))
 // Vanilla has neither, and the sidebar hides its Mods page, so drop the surfaces that lead there.
-const hasContent = computed(() => loaderContentKind(store.server?.loader) !== 'none')
+const hasContent = computed(() => auth.can('mods.read', store.currentServerId) && loaderContentKind(store.server?.loader) !== 'none')
 
 const RECENT_LOG_PREVIEW_LINES = 16
 
@@ -163,7 +164,7 @@ async function copyValue(key, value) {
 }
 
 onMounted(() => {
-  if (auth.managed) return
+  if (auth.managed || !auth.can('tunnels.read')) return
   _unsubscribePlayit = playit.subscribe()
 })
 
@@ -178,10 +179,10 @@ onUnmounted(() => {
 
 <template>
   <div class="overview-page">
-    <section class="overview-page__stats" :class="{ 'overview-page__stats--three': !hasContent }">
-      <StatCard :label="$t('overview.stats.players')" :value="store.serverStatus.players.online" :unit="store.serverStatus.players.max ? `/${store.serverStatus.players.max}` : ''" />
+    <section class="overview-page__stats" :class="{ 'overview-page__stats--three': !hasContent, 'overview-page__stats--proxy': isVelocity }">
+      <StatCard v-if="!isVelocity" :label="$t('overview.stats.players')" :value="store.serverStatus.players.online" :unit="store.serverStatus.players.max ? `/${store.serverStatus.players.max}` : ''" />
       <StatCard :label="$t('overview.stats.uptime')" :value="store.serverStatus.uptime" />
-      <StatCard :label="$t('overview.stats.tps')" :value="tpsDisplay" :accent="tpsAccent" />
+      <StatCard v-if="!isVelocity" :label="$t('overview.stats.tps')" :value="tpsDisplay" :accent="tpsAccent" />
       <StatCard v-if="hasContent" :label="$t('overview.stats.mods')" :value="store.installedMods.length" :accent="store.installedMods.length > 0 ? 'primary' : 'default'" />
     </section>
 
@@ -211,7 +212,7 @@ onUnmounted(() => {
       </div>
     </Panel>
 
-    <Panel v-if="store.activeModpack" :title="$t('modpacks.active')">
+    <Panel v-if="store.activeModpack && !isVelocity" :title="$t('modpacks.active')">
       <div class="overview-page__modpack">
         <span class="overview-page__modpack-name">{{ store.activeModpack.name || store.activeModpack.projectId }}</span>
         <span class="overview-page__modpack-version">{{ store.activeModpack.version }}</span>
@@ -220,7 +221,7 @@ onUnmounted(() => {
 
     <section class="overview-page__row">
       <div class="overview-page__col">
-        <Panel :title="$t('overview.performance')">
+        <Panel v-if="auth.can('server.metrics.read', store.currentServerId)" :title="$t('overview.performance')">
           <div class="overview-page__perf">
             <div class="overview-page__perf-row">
               <span class="overview-page__perf-label">{{ ramLabel }}</span>
@@ -249,7 +250,7 @@ onUnmounted(() => {
           </div>
         </Panel>
 
-        <Panel :title="$t('overview.recentLogs')">
+        <Panel v-if="auth.can('server.logs.read', store.currentServerId)" :title="$t('overview.recentLogs')">
           <template #action>
             <a class="overview-page__panel-link" @click.prevent="store.goToConsole">
               {{ $t('nav.console') }}
@@ -352,6 +353,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.overview-page__stats.overview-page__stats--proxy { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .overview-page {
   display: flex;
   flex-direction: column;

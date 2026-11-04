@@ -20,6 +20,7 @@
 
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
+import { useAuthStore } from './auth'
 import { getPlayitStatus, startPlayit, stopPlayit, resetPlayit } from '../api/playit'
 import { t } from '../i18n'
 
@@ -40,6 +41,16 @@ export const usePlayitStore = defineStore('playit', () => {
   const _consumers     = ref(0)
   const _pollHandle    = ref(null)
   const _inFlightFetch = ref(null)
+  let generation = 0
+
+  function clearState() {
+    generation++
+    if (_pollHandle.value) clearInterval(_pollHandle.value)
+    _pollHandle.value = null
+    _consumers.value = 0
+    _inFlightFetch.value = null
+    _applySnapshot(null)
+  }
 
   // ---------- Getters (daemon-level) ----------
   // `isActive` is the on/off truth for the agent toggle: the daemon is live or
@@ -85,47 +96,38 @@ export const usePlayitStore = defineStore('playit', () => {
 
   // ---------- Actions ----------
   async function fetch() {
+    if (!useAuthStore().can('tunnels.read')) return
     if (_inFlightFetch.value) return _inFlightFetch.value
+    const started = generation
     const promise = (async () => {
       try {
-        _applySnapshot(await getPlayitStatus())
+        const data = await getPlayitStatus()
+        if (started === generation) _applySnapshot(data)
       } catch {
         // Network hiccup — keep stale state. Don't flash an absent card.
       } finally {
-        _inFlightFetch.value = null
+        if (started === generation) _inFlightFetch.value = null
       }
     })()
     _inFlightFetch.value = promise
     return promise
   }
 
-  async function start() {
+  async function mutate(action) {
+    const started = generation
     try {
-      _applySnapshot(await startPlayit())
+      const data = await action()
+      if (started === generation) _applySnapshot(data)
     } catch (err) {
-      // True transport failure — surface a generic error so the UI can react.
+      if (started !== generation) return
       status.value = 'error'
       errorReason.value = err?.message || t('errors.networkShort')
     }
   }
 
-  async function stop() {
-    try {
-      _applySnapshot(await stopPlayit())
-    } catch (err) {
-      status.value = 'error'
-      errorReason.value = err?.message || t('errors.networkShort')
-    }
-  }
-
-  async function reset() {
-    try {
-      _applySnapshot(await resetPlayit())
-    } catch (err) {
-      status.value = 'error'
-      errorReason.value = err?.message || t('errors.networkShort')
-    }
-  }
+  const start = () => mutate(startPlayit)
+  const stop = () => mutate(stopPlayit)
+  const reset = () => mutate(resetPlayit)
 
   /**
    * Subscribe to polling. Returns an unsubscribe function — every component
@@ -133,6 +135,7 @@ export const usePlayitStore = defineStore('playit', () => {
    * poller leaks past the consumer's lifetime.
    */
   function subscribe() {
+    const started = generation
     _consumers.value += 1
     if (_consumers.value === 1) {
       // Fire an immediate fetch so the new consumer doesn't have to wait
@@ -142,7 +145,7 @@ export const usePlayitStore = defineStore('playit', () => {
     }
     let released = false
     return function unsubscribe() {
-      if (released) return
+      if (released || started !== generation) return
       released = true
       _consumers.value -= 1
       if (_consumers.value <= 0) {
@@ -163,6 +166,6 @@ export const usePlayitStore = defineStore('playit', () => {
     isError, isUnsupported, binaryUnverified, binarySystem,
     tunnelForPort,
     // actions
-    fetch, start, stop, reset, subscribe,
+    fetch, start, stop, reset, subscribe, clearState,
   }
 })

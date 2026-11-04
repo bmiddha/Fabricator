@@ -1,5 +1,6 @@
 """JSON-based storage for server data."""
 import json
+import logging
 import os
 import shutil
 import threading
@@ -50,6 +51,16 @@ class _LazyServersFile:
 
 SERVERS_FILE = _LazyServersFile()
 _storage_lock = threading.Lock()
+
+
+def _request_dns_sync() -> None:
+    try:
+        from backend.dns.service import request_sync
+        request_sync()
+    except ImportError:
+        pass
+    except Exception:
+        logging.getLogger(__name__).warning("Could not request DNS synchronization", exc_info=True)
 
 
 def _ensure_file_exists():
@@ -173,6 +184,7 @@ def create_server(server_data: Dict[str, Any]) -> Dict[str, Any]:
 
         servers.append(new_server)
         save_servers(servers)
+        _request_dns_sync()
 
         return new_server
 
@@ -195,6 +207,8 @@ def update_server(server_id: str, updates: Dict[str, Any]) -> Optional[Dict[str,
                 server.update(updates)
                 server['updatedAt'] = iso_z_now()
                 save_servers(servers)
+                if set(updates) & {'port', 'serverIp', 'velocityRouting'}:
+                    _request_dns_sync()
                 return server
 
         return None
@@ -209,17 +223,37 @@ def delete_server(server_id: str) -> bool:
     Returns:
         True if deleted, False if not found
     """
-    with _storage_lock:
+    from backend.velocity.service import topology_lock, referencing_proxies
+    with topology_lock, _storage_lock:
         servers = load_servers()
+        if referencing_proxies(server_id, servers):
+            raise ValueError("Server is referenced by a Velocity proxy; remove its routes first")
         initial_count = len(servers)
 
         servers = [s for s in servers if s.get('id') != server_id]
 
         if len(servers) < initial_count:
             save_servers(servers)
+            _request_dns_sync()
             return True
 
         return False
+
+
+def update_servers(updates_by_id: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Atomically persist one related set of server updates or change nothing."""
+    with _storage_lock:
+        servers = load_servers()
+        found = {s['id']: s for s in servers if s['id'] in updates_by_id}
+        if set(found) != set(updates_by_id):
+            raise ValueError("An affected server no longer exists")
+        for server_id, updates in updates_by_id.items():
+            found[server_id].update(updates)
+            found[server_id]['updatedAt'] = iso_z_now()
+        save_servers(servers)
+        if any(set(updates) & {'port', 'serverIp', 'velocityRouting'} for updates in updates_by_id.values()):
+            _request_dns_sync()
+        return found
 
 
 def reorder_servers(ids: List[str]) -> List[Dict[str, Any]]:

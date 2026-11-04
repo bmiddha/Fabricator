@@ -80,6 +80,19 @@ _MANAGE = [
 
 # --- NEVER: no token, either scope ------------------------------------------ #
 _NEVER = [
+    ("GET", "/api/auth/oidc/login"),
+    ("GET", "/api/auth/oidc/callback"),
+    ("GET", "/api/servers/<server_id>/velocity/config"),
+    ("PUT", "/api/servers/<server_id>/velocity/config"),
+    ("POST", "/api/servers/<server_id>/velocity/forwarding/preview"),
+    ("POST", "/api/servers/<server_id>/velocity/forwarding/apply"),
+    ("GET", "/api/dns"),
+    ("PUT", "/api/dns/config"),
+    ("PUT", "/api/dns/records"),
+    ("POST", "/api/dns/plan"),
+    ("POST", "/api/dns/sync"),
+    ("GET", "/api/servers/<server_id>/dns"),
+    ("PUT", "/api/servers/<server_id>/dns"),
     # raw console / file read+write / boot behaviour / delete / create
     ("POST", "/api/servers/<server_id>/console"),
     ("GET", "/api/servers/<server_id>/files"),

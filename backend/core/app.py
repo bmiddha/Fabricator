@@ -16,6 +16,8 @@ from backend.server.players.routes import players_bp
 from backend.playit.routes import playit_bp
 from backend.integrations.routes import integrations_bp
 from backend.schedules.routes import schedules_bp
+from backend.dns.routes import dns_bp
+from backend.velocity.routes import velocity_bp
 from backend.backups.scheduler import init_scheduler
 
 def get_base_path() -> str:
@@ -60,6 +62,8 @@ def create_app() -> Flask:
     app.register_blueprint(playit_bp)
     app.register_blueprint(integrations_bp)
     app.register_blueprint(schedules_bp)
+    app.register_blueprint(dns_bp)
+    app.register_blueprint(velocity_bp, url_prefix="/api")
 
     # One-time startup cleanup: flip stale 'installing'/'starting' statuses
     # left over from a previous run. Tolerates a missing/malformed index.
@@ -85,6 +89,8 @@ def create_app() -> Flask:
     init_scheduler(app)
     from backend.schedules.service import register_all_jobs as register_schedule_jobs
     register_schedule_jobs()
+    from backend.dns.service import init_dns
+    init_dns()
 
     @app.route(
         "/api/<path:_>",
@@ -119,4 +125,3 @@ def create_app() -> Flask:
         )
 
     return app
-

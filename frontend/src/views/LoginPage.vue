@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/auth'
 import AppButton from '../components/ui/AppButton.vue'
 import FormField from '../components/ui/FormField.vue'
 import { t } from '../i18n'
+import { safeReturn } from '../utils/permissions'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -15,7 +16,19 @@ const error = ref('')
 const submitting = ref(false)
 const passwordInput = ref(null)
 
-onMounted(() => passwordInput.value?.focus())
+onMounted(() => {
+  passwordInput.value?.focus()
+  const code = route.query.oidc_error
+  if (typeof code === 'string') {
+    error.value = t(`access.oidcErrors.${['busy', 'unavailable', 'cancelled', 'denied', 'invalid'].includes(code) ? code : 'invalid'}`)
+  }
+})
+
+function signIn() {
+  if (submitting.value) return
+  submitting.value = true
+  window.location.assign('/api/auth/oidc/login?' + new URLSearchParams({ redirect: safeReturn(route.query.redirect) }))
+}
 
 async function onSubmit() {
   if (submitting.value) return
@@ -27,7 +40,7 @@ async function onSubmit() {
     // Only follow same-app absolute paths — reject protocol-relative (//evil.com)
     // and backslash forms so a crafted ?redirect= can't become an open redirect.
     const raw = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
-    const redirect = /^\/(?!\/)/.test(raw) && !raw.includes('\\') ? raw : '/'
+    const redirect = safeReturn(raw)
     router.replace(redirect)
   } else {
     error.value =
@@ -41,12 +54,12 @@ async function onSubmit() {
 
 <template>
   <div class="login-page">
-    <form class="login-card" @submit.prevent="onSubmit">
+    <form class="login-card" @submit.prevent="auth.oidcMode ? signIn() : onSubmit()">
       <img class="login-card__logo" src="/favicon.svg" alt="" />
       <h1 class="login-card__title">Fabricator</h1>
-      <p class="login-card__subtitle">{{ $t('auth.login.subtitle') }}</p>
+      <p class="login-card__subtitle">{{ auth.oidcMode ? $t('access.oidcSubtitle') : $t('auth.login.subtitle') }}</p>
 
-      <FormField :label="$t('auth.password')" v-slot="{ id, describedBy }">
+      <FormField v-if="!auth.oidcMode" :label="$t('auth.password')" v-slot="{ id, describedBy }">
         <input
           :id="id"
           v-model="password"
@@ -61,7 +74,7 @@ async function onSubmit() {
       <p v-if="error" class="login-card__error" role="alert">{{ error }}</p>
 
       <AppButton type="submit" variant="primary" size="md" :loading="submitting">
-        {{ $t('auth.login.submit') }}
+        {{ auth.oidcMode ? $t('access.signIn', { provider: auth.providerName }) : $t('auth.login.submit') }}
       </AppButton>
     </form>
   </div>

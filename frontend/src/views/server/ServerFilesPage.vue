@@ -10,6 +10,7 @@ import { copyToClipboard } from '../../utils/clipboard'
 import { useServerStore } from '../../stores/server'
 import { useToast } from '../../composables/useToast'
 import { t } from '../../i18n'
+import { useCapabilities } from '../../composables/useCapabilities'
 
 // Async-loaded so CodeMirror lands in its own chunk instead of the main bundle
 // (the Files route is imported statically by the router).
@@ -17,6 +18,7 @@ const CodeEditor = defineAsyncComponent(() => import('../../components/ui/CodeEd
 
 const store = useServerStore()
 const toast = useToast()
+const can = useCapabilities()
 
 const editorRef = ref(null)
 const codeEditorRef = ref(null)
@@ -89,6 +91,7 @@ const handleInvalidSaveCancel = () => {
 }
 
 const onSave = async () => {
+  if (!can('files.write')) return
   if (store.fileEditor.loading || store.fileEditor.saving || !store.hasFileChanges) return
   if (!(await confirmInvalidSave())) return
   await store.saveFile()
@@ -145,6 +148,7 @@ const openFileAndScroll = async (path) => {
 }
 
 const onFileClick = async (entry) => {
+  if (!can('files.read')) return
   if (!(await confirmDiscardChanges())) return
   await openFileAndScroll(entry.relativePath || entry.name)
 }
@@ -291,6 +295,7 @@ const isFileDrag = (event) => Array.from(event.dataTransfer?.types || []).includ
 const onDragEnter = (event) => {
   if (!isFileDrag(event)) return
   event.preventDefault()
+  if (!can('files.upload')) return
   dragDepth.value += 1
 }
 
@@ -298,7 +303,7 @@ const onDragOver = (event) => {
   if (!isFileDrag(event)) return
   // Without this the browser leaves the page to open the dropped file.
   event.preventDefault()
-  event.dataTransfer.dropEffect = 'copy'
+  event.dataTransfer.dropEffect = can('files.upload') ? 'copy' : 'none'
 }
 
 const onDragLeave = () => {
@@ -306,6 +311,7 @@ const onDragLeave = () => {
 }
 
 const onDrop = (event) => {
+  if (!can('files.upload')) { event.preventDefault(); return }
   if (!isFileDrag(event)) return
   event.preventDefault()
   dragDepth.value = 0
@@ -510,8 +516,8 @@ const onCopyPath = async () => {
         >×</button>
       </div>
       <AppButton variant="ghost" size="sm" :loading="store.fileBrowser.loading" @click="onRefresh">{{ $t('common.refresh') }}</AppButton>
-      <AppButton variant="ghost" size="sm" @click="openNewFolder">{{ $t('files.newFolder') }}</AppButton>
-      <AppButton variant="primary" size="sm" @click="openFilePicker">{{ $t('files.upload') }}</AppButton>
+      <AppButton v-if="can('files.create_directory')" variant="ghost" size="sm" @click="openNewFolder">{{ $t('files.newFolder') }}</AppButton>
+      <AppButton v-if="can('files.upload')" variant="primary" size="sm" @click="openFilePicker">{{ $t('files.upload') }}</AppButton>
       <input
         ref="fileInputRef"
         type="file"
@@ -638,6 +644,7 @@ const onCopyPath = async () => {
               </button>
               <button
                 v-else
+                :disabled="!can('files.read')"
                 type="button"
                 class="files-page__name-btn"
                 @click="onFileClick(entry)"
@@ -653,6 +660,7 @@ const onCopyPath = async () => {
             <td class="files-page__td-modified">{{ formatModified(entry.updatedAt) }}</td>
             <td class="files-page__td-actions">
               <button
+                v-if="can('files.delete')"
                 type="button"
                 class="files-page__delete"
                 :title="$t('files.delete.entry', { name: entry.name })"
@@ -675,7 +683,7 @@ const onCopyPath = async () => {
 
     <div v-else class="files-page__workspace">
       <aside class="files-page__tree-pane">
-        <FileTree :active-path="store.fileEditor.path || ''" @select="onTreeSelect" />
+        <FileTree v-if="can('files.list')" :active-path="store.fileEditor.path || ''" @select="onTreeSelect" />
       </aside>
 
       <Panel
@@ -692,6 +700,7 @@ const onCopyPath = async () => {
             @click="onCloseEditor"
           >{{ $t('common.close') }}</AppButton>
           <AppButton
+            v-if="can('files.write')"
             variant="primary"
             size="sm"
             :loading="store.fileEditor.saving"
@@ -707,7 +716,7 @@ const onCopyPath = async () => {
             ref="codeEditorRef"
             v-model="store.fileEditor.content"
             :path="store.fileEditor.path"
-            :disabled="store.fileEditor.saving"
+            :disabled="store.fileEditor.saving || !can('files.write')"
             @save="onSave"
             @validity="onValidity"
           />

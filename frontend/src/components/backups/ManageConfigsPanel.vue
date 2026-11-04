@@ -6,6 +6,9 @@ import ToggleRow from '../ui/ToggleRow.vue'
 import { formatFileSize } from '../../utils/format'
 import { useBackupsStore } from '../../stores/backups'
 import { t } from '../../i18n'
+import { useCapabilities } from '../../composables/useCapabilities'
+
+const can = useCapabilities()
 
 const props = defineProps({
   show: {
@@ -67,6 +70,7 @@ function onClose() {
         <header class="manage-panel__header">
           <h2 class="manage-panel__title">{{ $t('backups.config.panelTitle') }}</h2>
           <button
+            v-if="can('backups.config.write')"
             type="button"
             class="manage-panel__close"
             :disabled="store.savingConfig"
@@ -82,6 +86,7 @@ function onClose() {
         <div class="manage-panel__body">
           <aside class="manage-panel__list" :aria-label="$t('backups.config.listLabel')">
             <button
+              v-if="can('backups.config.write')"
               type="button"
               class="manage-panel__list-create"
               :class="{ 'is-active': !isEditing && props.show }"
@@ -123,6 +128,7 @@ function onClose() {
               <h3>{{ heading }}</h3>
               <div v-if="isEditing" class="manage-panel__editor-actions">
                 <AppButton
+                  v-if="can('backups.create')"
                   variant="ghost"
                   size="sm"
                   :disabled="store.activeJob?.active || !!store.runningConfigId || store.savingConfig || store.deletingConfig"
@@ -131,6 +137,7 @@ function onClose() {
                   {{ $t('backups.config.runNow') }}
                 </AppButton>
                 <AppButton
+                  v-if="can('backups.config.write')"
                   variant="ghost"
                   size="sm"
                   :disabled="store.savingConfig || store.deletingConfig"
@@ -141,7 +148,8 @@ function onClose() {
               </div>
             </header>
 
-            <form class="manage-panel__form" @submit.prevent="onSave">
+            <form class="manage-panel__form" @submit.prevent="can('backups.config.write') && onSave()">
+              <fieldset :disabled="!can('backups.config.write')" class="permission-fields">
               <FormField :label="$t('backups.config.name')" :hint="$t('backups.config.nameHint')">
                 <template #default="{ id, describedBy }">
                   <input
@@ -231,6 +239,7 @@ function onClose() {
               </fieldset>
 
               <p v-if="store.draftError" class="manage-panel__error">{{ store.draftError }}</p>
+              </fieldset>
 
               <footer class="manage-panel__form-actions">
                 <AppButton
@@ -242,6 +251,7 @@ function onClose() {
                   {{ $t('common.close') }}
                 </AppButton>
                 <AppButton
+                  v-if="can('backups.config.write')"
                   variant="primary"
                   size="md"
                   :loading="store.savingConfig"

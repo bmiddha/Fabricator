@@ -41,6 +41,7 @@ from backend.utils import platform as platform_utils
 from backend.utils.java import parse_java_major, parse_java_version_string
 from backend.utils.routes import require_server, with_server_lock
 from backend.utils.strings import bool_from_str, escape_properties_value
+from backend.velocity import service as velocity_service
 from backend.utils.time import iso_z_from_timestamp, iso_z_now
 from backend.utils.upload import (
     UploadTooLargeError,
@@ -129,6 +130,8 @@ def _augment_with_runtime(server: dict) -> dict:
         return server
 
     runtime = dict(_registry().get_status(server['id']) or {})
+    if velocity_service.is_velocity(server):
+        runtime['tpsSupported'] = False
     try:
         mods_path = _registry().resolve_mods_path(server)
         runtime['mods'] = sum(1 for f in mods_path.iterdir() if f.is_file() and f.suffix == '.jar')
@@ -136,6 +139,8 @@ def _augment_with_runtime(server: dict) -> dict:
         pass
 
     augmented = dict(server)
+    if velocity_service.is_velocity(server):
+        augmented.update(velocity_service.capabilities(server))
     if runtime:
         augmented['runtime'] = runtime
         runtime_status = runtime.get('status')
@@ -459,6 +464,8 @@ def _record_fields_from_properties(props: dict) -> dict:
 
 
 def _write_server_properties(server: dict) -> tuple[bool, str | None]:
+    if velocity_service.is_velocity(server):
+        return True, None
     try:
         install_path = _registry().resolve_install_path(server)
     except ValueError as exc:
@@ -513,8 +520,8 @@ def _build_java_recommendation(system: str, required_java: int) -> dict:
     }
 
 
-def _java_compat_payload(mc_version: str) -> dict:
-    compat = resolve_required_java(mc_version)
+def _java_compat_payload(mc_version: str, loader: str | None = None) -> dict:
+    compat = resolve_required_java(mc_version, loader)
     return compat.to_dict()
 
 
@@ -575,6 +582,7 @@ SETTABLE_SETTINGS_FIELDS = _SETTINGS_RECORD_FIELDS | _SETTINGS_PROPERTY_FIELDS
 _SETTINGS_IGNORED_ECHO_FIELDS = frozenset({
     'id', 'createdAt', 'updatedAt', 'runtime',
     'javaCompatibility', 'javaRequirement',
+    'kind', 'capabilities',
 })
 
 _MIN_PORT = 1
@@ -723,7 +731,7 @@ def _normalize_launch_overrides(data: dict) -> str | None:
 
 def _server_java_check_payload(server: dict) -> dict:
     runtime = _registry().get_java_runtime(server)
-    compat = resolve_required_java(server.get('version', ''))
+    compat = resolve_required_java(server.get('version', ''), server.get('loader'))
     detected_java = runtime.get('major_version')
     required_java = compat.required_java
     meets_requirement = (
@@ -752,18 +760,26 @@ def health_check():
 
 @server_bp.route('/servers', methods=['GET'])
 def get_servers():
-    servers = [_augment_with_runtime(server) for server in storage.get_all_servers()]
+    from backend.auth.permissions import can
+    servers = [
+        _augment_with_runtime(server) for server in storage.get_all_servers()
+        if can("server.view", server["id"])
+    ]
     return jsonify(servers)
 
 
 @server_bp.route('/servers/order', methods=['PUT'])
 def reorder_servers():
     """Persist the switcher order; the first server is the default on open (#84)."""
+    from backend.auth.permissions import can
     ids = (request.get_json(silent=True) or {}).get('ids')
     if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
         return jsonify({'error': 'ids must be a list of server ids'}), 400
     servers = storage.reorder_servers(ids)
-    return jsonify([_augment_with_runtime(server) for server in servers])
+    return jsonify([
+        _augment_with_runtime(server) for server in servers
+        if can("server.view", server["id"])
+    ])
 
 
 @server_bp.route('/servers', methods=['POST'])
@@ -779,6 +795,10 @@ def create_server():
 
     if not data:
         return jsonify({'error': 'Request body is required'}), 400
+    if not isinstance(data, dict):
+        return jsonify({'error': 'Request body must be an object'}), 400
+    if is_managed() and str(data.get('loader', '')).strip().lower() == 'velocity':
+        return jsonify({'error': 'Velocity proxies are not supported in managed mode'}), 403
 
     required_fields = ['name', 'version', 'loader', 'port', 'installPath']
     missing_fields = [field for field in required_fields if field not in data]
@@ -796,6 +816,8 @@ def create_server():
     data.pop('schedules', None)
     # Only the import route may register a folder outside the server root.
     data.pop('external', None)
+    for field in ('velocityRouting', 'forwardingProxyId'):
+        data.pop(field, None)
 
     try:
         data['status'] = 'pending'
@@ -806,6 +828,9 @@ def create_server():
 
 def _validate_new_server(data: dict) -> Optional[str]:
     """Normalize the launch/port/memory fields of a new record in place."""
+    data['loader'] = str(data.get('loader') or '').strip().lower()
+    if data['loader'] not in supported_loaders():
+        return f"Unsupported loader: {data['loader']}"
     # Coerce before the duplicate check so the comparison is int-vs-int, and
     # before the record is written so the stored type is always int. An
     # unparseable port is the caller's mistake — a 400, not an unhandled 500.
@@ -833,9 +858,11 @@ def _validate_new_server(data: dict) -> Optional[str]:
 
 def _create_server_record(data: dict) -> dict:
     """Persist a validated record and attach its Java requirement."""
-    compatibility = _java_compat_payload(data.get('version', ''))
+    compatibility = _java_compat_payload(data.get('version', ''), data.get('loader'))
     data['javaCompatibility'] = compatibility
     server = storage.create_server(data)
+    if velocity_service.is_velocity(server):
+        server = {**server, **velocity_service.capabilities(server)}
     java_check = _server_java_check_payload(server)
     recommendation = None
     if compatibility.get('required_java'):
@@ -1133,6 +1160,8 @@ def get_server_file_content(server_id, server):
 
     if not target_path.exists() or not target_path.is_file():
         return jsonify({'error': 'File not found'}), 404
+    if velocity_service.protected_file(server, target_path):
+        return jsonify({'error': 'Use structured Velocity configuration; this file is protected'}), 403
 
     try:
         with open(target_path, 'r', encoding='utf-8') as file_handle:
@@ -1165,6 +1194,8 @@ def update_server_file_content(server_id, server):
 
     if not target_path.exists() or not target_path.is_file():
         return jsonify({'error': 'File not found'}), 404
+    if velocity_service.protected_file(server, target_path):
+        return jsonify({'error': 'Use structured Velocity configuration; this file is protected'}), 403
 
     try:
         with open(target_path, 'w', encoding='utf-8') as file_handle:
@@ -1212,6 +1243,8 @@ def upload_server_file(server_id, server):
 
     if not target_dir.is_dir():
         return jsonify({'error': 'Directory not found'}), 404
+    if velocity_service.protected_file(server, target):
+        return jsonify({'error': 'This managed forwarding configuration file is protected'}), 403
 
     # _ensure_child_path resolves, so a symlink pointing *outside* the install
     # path was already rejected above. One pointing back inside still needs
@@ -1314,6 +1347,14 @@ def delete_server_files(server_id, server):
             target = _resolve_delete_target(base_path, relative)
         except ValueError as exc:
             errors.append({'path': relative, 'error': str(exc)})
+            continue
+        if velocity_service.protected_file(server, target) or (
+            target.is_dir() and any(
+                velocity_service.protected_file(server, child)
+                for child in target.rglob('*') if child.is_file()
+            )
+        ):
+            errors.append({'path': relative, 'error': 'Managed forwarding configuration is protected'})
             continue
 
         # exists() follows symlinks, so a dangling link needs the second check
@@ -1609,6 +1650,13 @@ def update_server_settings(server_id, server):
 
     if not data:
         return jsonify({'error': 'Request body is required'}), 400
+    if velocity_service.is_velocity(server):
+        invalid = set(data) - _SETTINGS_RECORD_FIELDS - _SETTINGS_IGNORED_ECHO_FIELDS
+        if invalid:
+            return jsonify({'error': 'Use /velocity/config for proxy listen and routing settings; game-server settings are not supported'}), 400
+    references = velocity_service.referencing_proxies(server_id) if server.get('forwardingProxyId') else []
+    if references and 'onlineMode' in data and data['onlineMode'] != server.get('onlineMode', True):
+        return jsonify({'error': 'Remove backend proxy routes and restore forwarding backups before changing authentication'}), 409
 
     # C2 managed reject: launch config (command / javaPath / the whole launch
     # object) is installer-owned; no legitimate settings caller sets it. Refuse
@@ -1637,6 +1685,11 @@ def update_server_settings(server_id, server):
     error = _normalize_port(data)
     if error:
         return jsonify({'error': error}), 400
+    if references and any(
+        key in data and data[key] != server.get(key, 25565 if key == 'port' else '')
+        for key in ('port', 'serverIp')
+    ) and any(_registry().get_status(sid).get('status') in {'running', 'stopping'} for sid in references):
+        return jsonify({'error': 'Stop referencing proxies before changing a backend bind address or port'}), 409
     if 'port' in data and _port_taken_by_other(
         data['port'], storage.get_all_servers(), exclude_id=server_id
     ):
@@ -1658,7 +1711,7 @@ def update_server_settings(server_id, server):
         }), 400
 
     runtime_status = _registry().get_status(server_id)
-    if runtime_status.get('status') == 'running':
+    if runtime_status.get('status') in {'running', 'stopping'} or runtime_status.get('stopping'):
         return jsonify({'error': 'Stop the server before changing settings'}), 409
 
     server = storage.update_server(server_id, data)
@@ -1706,8 +1759,12 @@ def set_server_autostart(server_id, server):
 
 @server_bp.route('/servers/<server_id>', methods=['DELETE'])
 @require_server
+@velocity_service.with_topology_lock
 @with_server_lock
 def delete_server_route(server_id, server):
+    references = velocity_service.referencing_proxies(server_id)
+    if references:
+        return jsonify({'error': 'Server is referenced by Velocity proxies; remove its routes first', 'proxyIds': references}), 409
     # Stop running process if needed
     _registry().stop_server(server_id)
 
@@ -1742,6 +1799,7 @@ def delete_server_route(server_id, server):
         remove_schedule_job(schedule.get('id'))
 
     storage.delete_server(server_id)
+    velocity_service.delete_secret(server)
     discard_lock(server_id)
 
     # Delete files on disk — unless the folder was imported in place and
@@ -1886,6 +1944,8 @@ def install_server(server_id, server):
     modpack_intent = pending_modpack.normalize_intent(
         (request.get_json(silent=True) or {}).get('modpack')
     )
+    if loader == 'velocity' and modpack_intent:
+        return jsonify({'error': 'Minecraft modpacks cannot be installed on Velocity proxies'}), 400
 
     installer = _get_installer(loader, install_path)
     if not installer:
@@ -2177,7 +2237,7 @@ def start_server_by_id(server_id, server):
             'error': 'Server is currently installing. Please wait.'
         }), 400
 
-    compat = resolve_required_java(server.get('version', ''))
+    compat = resolve_required_java(server.get('version', ''), server.get('loader'))
     required_java_major = compat.required_java if compat.enforceable else None
     if skip_java_enforcement():
         required_java_major = None
@@ -2315,7 +2375,7 @@ def get_java_status():
             'error': 'java_path is not accepted for token-authenticated requests'
         }), 400
 
-    compat = resolve_required_java(mc_version) if mc_version else None
+    compat = resolve_required_java(mc_version, request.args.get('loader')) if mc_version else None
     required_java = None
     if required_java_param:
         try:

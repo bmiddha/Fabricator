@@ -32,6 +32,11 @@ body {
   min-height: 100vh;
 }
 
+/* Preserve the form's layout while disabling its native controls together. */
+.permission-fields {
+  display: contents;
+}
+
 /* Colors */
 :root {
   /* Surfaces */

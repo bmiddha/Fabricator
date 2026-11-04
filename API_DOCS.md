@@ -13,6 +13,7 @@ Errors are consistently `{"error": "<message>"}`. Anything under `/api` not list
 - [Authentication](#authentication)
 - [Health](#health)
 - [Servers](#servers)
+- [DNS management](#dns-management)
 - [Server files](#server-files)
 - [Mods](#mods)
 - [Console & metrics](#console--metrics)
@@ -33,9 +34,79 @@ Errors are consistently `{"error": "<message>"}`. Anything under `/api` not list
 
 ---
 
+## DNS management
+
+DNS administration is session-only (not available to MCP API tokens) and
+unavailable in managed-hosting mode. Provider credentials are configured in the
+separate webhook service. DNS settings are disabled until explicitly configured.
+In OIDC mode all DNS administration requires the global `dns.manage` permission,
+including server bindings (which additionally require `server.view` on the target).
+DNS administration is instance-wide because synchronization and ownership span
+all bindings and manual records; a per-server role cannot grant it.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/dns` | Configuration, manual record sets, bindings, owner, cleanup inventory, sync status |
+| PUT | `/api/dns/config` | Configure `{enabled, url, zone, domain}`; domain defaults to zone |
+| PUT | `/api/dns/records` | Replace manual record sets with a validated JSON array |
+| POST | `/api/dns/plan` | Read live provider state and return desired records and grouped changes |
+| POST | `/api/dns/sync` | Reconcile all changes and return persisted status |
+| GET | `/api/servers/<server_id>/dns` | Read the server's DNS binding |
+| PUT | `/api/servers/<server_id>/dns` | Save an opt-in DNS binding |
+
+Record shape:
+
+```json
+{"dnsName":"play.mc.example.com","recordType":"A","recordTTL":300,"targets":["192.0.2.10"]}
+```
+
+Supported manual types are A, AAAA, CNAME, SRV, TXT, MX, CAA, and NS.
+Use full DNS names, one RRset per name/type, TTL 60–2147483647, and presentation
+targets for SRV (`0 0 25565 play.mc.example.com.`), MX (`10 mail.example.com.`),
+and CAA (`0 issue "letsencrypt.org"`). SOA and managed-apex NS are infrastructure
+owned by the authoritative server. A CNAME cannot coexist with other data or be
+an SRV target. The `_fabricator-` prefix is reserved for ownership metadata.
+
+Server binding shape:
+
+```json
+{
+  "enabled": true,
+  "hostname": "survival.mc.example.com",
+  "addresses": ["192.0.2.10", "2001:db8::10"],
+  "target": "",
+  "srv": true,
+  "ttl": 300,
+  "priority": 0,
+  "weight": 0
+}
+```
+
+Supply addresses or a CNAME target, not both. SRV generation requires explicit
+addresses and follows the server's configured port. `{ "enabled": false }`
+removes the binding's owned records on reconciliation; stopping the process
+does not. Server deletion retains cleanup inventory until removal succeeds.
+
+Saved changes are desired state, not publication acknowledgments. Status is
+`pending`, `applied`, `failed`, or `disabled`; `syncedAt` denotes the last successful
+provider verification, not public recursive propagation. Validation errors
+return 400; provider failures return 502. A failed manual sync returns its
+status and `error`; background failures persist the same diagnostics.
+
+Existing unmanaged records and ownership conflicts are never adopted silently.
+Only Fabricator-owned records are changed or deleted. Keep `dns.json` persistent
+when moving/restarting installations. Changes between provider URLs retain the
+old connection reference until cleanup succeeds. Clear manual records and
+bindings before changing the managed domain.
+
+See [deployment recipes](deploy/dns/README.md) for private webhook networking,
+Cloudflare credentials, authoritative delegation, and Kubernetes ExternalDNS
+usage. Fabricator does not create DNSEndpoint resources.
+
 ## Authentication
 
-Fabricator ships with a single-operator password login. The gate is default-deny: every `/api/`
+Fabricator supports single-operator password login or deployment-configured OIDC
+multi-user login. The gate is default-deny: every `/api/`
 route requires an authenticated session except the ones listed below.
 
 **States**
@@ -45,6 +116,10 @@ route requires an authenticated session except the ones listed below.
   serves `POST /api/auth/setup`, `GET /api/auth/status` and `GET /api/health` until a password is set.
 - **Configured** — normal login. Public routes are `POST /api/auth/login`, `GET /api/auth/status`
   and `GET /api/health`; everything else needs the session cookie.
+- **OIDC** — one configured provider replaces password login/setup. Public routes
+  are `GET /api/auth/oidc/login`, `GET /api/auth/oidc/callback`,
+  `GET /api/auth/status` and `GET /api/health`. Password setup/login/enable/disable/change
+  return `409`. Protected endpoints also require resolved action permissions.
 
 Unauthenticated requests get `401 {"error": "authentication required"}` (or `{"error": "setup required"}`
 in setup mode). The session cookie is HttpOnly, SameSite=Lax, and lives for 7 days.
@@ -85,6 +160,126 @@ Clears the session. **Response (200):** `{ "authenticated": false }`
 ```json
 { "enabled": true, "authenticated": false, "needs_setup": false }
 ```
+
+The response also includes `managed`; proven sessions/tokens receive
+`panel_version`. OIDC adds `auth_mode: "oidc"` and `provider_name`. Only a proven
+OIDC identity gets its own `user` object:
+
+```json
+{
+  "sub": "user-sub",
+  "roles": ["token-user"],
+  "permissions": ["tokens.self.manage"],
+  "servers": {
+    "srv_1": {
+      "roles": ["operator"],
+      "permissions": ["server.view", "server.metrics.read", "server.logs.read", "server.start", "server.stop", "server.restart", "tokens.self.manage"]
+    }
+  }
+}
+```
+
+`user.permissions` contains global grants; each server entry includes the union
+of global and server grants. Global server permissions also apply to servers
+not explicitly listed in `user.servers`. Role names are descriptive, never an
+authorization shortcut. No other user's map or provider tokens are returned.
+
+#### `GET /api/auth/oidc/login`
+
+Starts Authorization Code + PKCE S256 login with state and nonce.
+Optional `redirect` is a same-app absolute path; unsafe values fall back to `/`.
+Returns a browser redirect to the configured provider, not a JSON token.
+An unreachable provider redirects to `/login?oidc_error=unavailable`; transaction
+capacity exhaustion uses `busy`. OIDC not configured returns `404` outside setup mode.
+
+#### `GET /api/auth/oidc/callback`
+
+Registered callback URI; consumes the browser-bound, single-use transaction
+(expires after ten minutes). Validates the ID token signature, issuer, audience,
+authorized party, expiry and nonce, and requires a configured exact subject.
+Sets a seven-day HttpOnly session cookie, with no provider tokens inside it.
+Success redirects to the safe stored destination. Failures redirect to login
+with fixed error codes `invalid`, `denied` or `cancelled`; raw provider errors are
+never reflected. Logout is local only.
+
+#### OIDC permission catalog
+
+Configure `FABRICATOR_OIDC_USERS` and optional `FABRICATOR_AUTH_ROLES` as
+documented in [README](README.md#oidc-multiple-users-and-custom-roles) and
+`.env.example`. `admin` defaults to the explicit full catalog; `viewer` to
+`server.view`, `server.metrics.read`, `server.logs.read`; `operator` adds
+`server.start`, `server.stop`, `server.restart`; `token-user` grants only
+global `tokens.self.manage`.
+
+| Scope | Permission identifiers |
+| --- | --- |
+| Server discovery/details | `server.view` |
+| Server telemetry | `server.metrics.read`, `server.logs.read` |
+| Power | `server.start`, `server.stop`, `server.restart` |
+| Console/install/lifecycle | `server.console.execute`, `server.install`, `server.upgrade`, `server.delete` |
+| Settings | `server.settings.read`, `server.settings.write`, `server.autostart.write`, `server.icon.write` |
+| Files | `files.list`, `files.read`, `files.write`, `files.upload`, `files.delete`, `files.create_directory` |
+| Add-ons | `mods.read`, `mods.install`, `mods.toggle`, `mods.delete`, `modpacks.install` |
+| Backup archives | `backups.list`, `backups.create`, `backups.download`, `backups.restore`, `backups.delete` |
+| Backup configuration | `backups.config.read`, `backups.config.write` |
+| World import | `worlds.import` |
+| Players | `players.read`, `players.kick`, `players.bans.manage`, `players.ops.manage`, `players.whitelist.manage`, `players.known.delete` |
+| Schedules | `schedules.read`, `schedules.create`, `schedules.update`, `schedules.delete`, `schedules.run` |
+| Global server operations | `servers.create`, `servers.import`, `servers.reorder` |
+| Global host metrics | `host.metrics.read` |
+| Global Java | `java.read`, `java.install`, `java.delete` |
+| Global updates | `updates.read`, `updates.apply` |
+| Global tunnels (shared agent) | `tunnels.read`, `tunnels.manage` |
+| Global DNS administration | `dns.manage` |
+| Global token/MCP controls | `tokens.self.manage`, `tokens.all.manage`, `mcp.configure` |
+
+Every non-global action requires `server.view` on its target; configuration
+rejects effective server assignments missing this prerequisite. Settings-read
+controls whether full records (including sensitive configuration and paths)
+are returned. Without it, list/detail responses use a minimal projection,
+and metrics require their own grant. The properties form requires both
+settings-read and settings-write to edit; write-only API clients can still send
+explicit partial updates without reading current settings. File/backup access can expose secrets;
+console, installation, schedules, launch configuration and restore permissions
+can execute commands/code, including asynchronously. These permissions are not
+a host sandbox. Schedules run as the host service even after their creator logs
+out; review existing schedules when changing access.
+
+GET `/api/servers` filters by `server.view`. A server outside the caller's grants
+returns non-disclosing `404`; forbidden actions within an accessible server
+return `403`; missing/invalid identity returns `401`. Unknown routes fail closed.
+Existing managed-hosting locks remain additional restrictions.
+
+Route/action mapping follows resource and HTTP operation: files GET listing/search
+uses `files.list`, content GET/PUT uses `files.read`/`files.write`; uploads,
+deletion and directory creation have independent grants. Mods GET/POST/PATCH/DELETE
+use read/install/toggle/delete respectively. Backup download/restore/delete use
+their matching permissions; configuration CRUD uses config read/write, and purge
+also requires `backups.delete`. Backup/job progress requires the initiating
+operation's permission on the job's server. Install progress requires
+`server.install` or `server.upgrade`; Java install progress accepts `java.read`
+or `java.install`. Modpack staging handles are owner-bound,
+and installation checks the target server. Shared catalog reads require a
+relevant server/install/catalog capability; they never authorize mutation.
+
+#### User-owned MCP tokens
+
+Session-only `GET /api/integrations/mcp` lists the caller's tokens with
+`tokens.self.manage`, or all owners' tokens with `tokens.all.manage`.
+`POST /api/integrations/mcp/tokens` requires `tokens.self.manage` and accepts
+`{"name":"example","scope":"read"}` (or `"manage"`). The owner is always the
+current session; client-supplied owners are ignored. The secret appears only
+once, in the creation response. Metadata includes `owner: {"issuer":"...","sub":"..."}`.
+`DELETE /api/integrations/mcp/tokens/<token_id>` requires ownership plus
+self-management, or all-token management. Unavailable tokens return `404`.
+`PUT /api/integrations/mcp` requires `mcp.configure` and `{"enabled":true}`.
+
+Bearer access intersects the existing MCP read/manage/never table with the
+owner's effective permissions and filtered server access. Bearer credentials
+never manage tokens or the switch, even for full-access owners. Revocation is
+immediate; user/role changes take effect after restart. Ownerless legacy tokens
+are rejected in OIDC mode; OIDC-owned tokens are rejected in password mode or
+with a different issuer. Existing password-only tokens retain their behavior.
 
 ---
 

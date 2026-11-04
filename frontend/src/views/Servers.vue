@@ -75,8 +75,8 @@ onMounted(() => {
         aria-hidden="true"
       />
       <h2 class="servers-page__title">{{ $t('servers.emptyTitle') }}</h2>
-      <p class="servers-page__subtitle">{{ $t('servers.emptySubtitle') }}</p>
-      <AppButton v-if="!auth.managed" variant="primary" size="md" @click="showCreateModal = true">
+      <p class="servers-page__subtitle">{{ auth.can('servers.create') ? $t('servers.emptySubtitle') : $t('access.noServers') }}</p>
+      <AppButton v-if="!auth.managed && auth.can('servers.create')" variant="primary" size="md" @click="showCreateModal = true">
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <path d="M6 1v10M1 6h10"/>
         </svg>

@@ -2,8 +2,10 @@
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import AppButton from '../../components/ui/AppButton.vue'
 import { useServerStore } from '../../stores/server'
+import { useAuthStore } from '../../stores/auth'
 
 const store = useServerStore()
+const auth = useAuthStore()
 
 // Case-sensitive on purpose: Minecraft/Log4j and the JVM emit these tokens in
 // uppercase (e.g. "[Server thread/WARN]", "WARNING:"), so matching only
@@ -257,7 +259,7 @@ const toggleAutoScroll = async () => {
 
 const onSubmit = (event) => {
   event.preventDefault()
-  store.sendConsoleCommand()
+  if (auth.can('server.console.execute', store.currentServerId)) store.sendConsoleCommand()
 }
 
 const cmdInputRef = ref(null)
@@ -284,7 +286,7 @@ const onHistoryNext = () => {
 
 <template>
   <div class="console-page">
-    <div class="console-page__bar">
+    <div v-if="auth.can('server.logs.read', store.currentServerId)" class="console-page__bar">
       <div class="console-page__filters" role="group" :aria-label="$t('console.levelFilter')">
         <button
           v-for="level in ['ALL','INFO','WARN','ERROR','DEBUG']"
@@ -315,7 +317,7 @@ const onHistoryNext = () => {
       </div>
     </div>
 
-    <div ref="terminalRef" class="console-page__terminal" @scroll.passive="onTerminalScroll">
+    <div v-if="auth.can('server.logs.read', store.currentServerId)" ref="terminalRef" class="console-page__terminal" @scroll.passive="onTerminalScroll">
       <div v-if="!filteredLines.length" class="console-page__empty">
         <template v-if="store.logsLoading">{{ $t('console.loadingLogs') }}</template>
         <template v-else-if="activeFilter === 'ALL'">{{ $t('console.noLogs') }}</template>
@@ -337,7 +339,7 @@ const onHistoryNext = () => {
       </template>
     </div>
 
-    <form class="console-page__cmd" @submit="onSubmit">
+    <form v-if="auth.can('server.console.execute', store.currentServerId)" class="console-page__cmd" @submit="onSubmit">
       <span class="console-page__cmd-prompt">›</span>
       <input
         ref="cmdInputRef"

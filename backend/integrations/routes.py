@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
 
-from backend.auth import service
+from backend.auth import service, permissions
 
 integrations_bp = Blueprint("integrations", __name__, url_prefix="/api/integrations")
 
@@ -17,9 +17,11 @@ integrations_bp = Blueprint("integrations", __name__, url_prefix="/api/integrati
 @integrations_bp.route("/mcp", methods=["GET"])
 def get_mcp():
     """Return the switch state and token metadata (read from the file, no secret)."""
-    return jsonify(
-        {"enabled": service.mcp_state()["enabled"], "tokens": service.list_tokens()}
-    )
+    user = permissions.principal()
+    tokens = service.list_tokens()
+    if user and not user.can("tokens.all.manage"):
+        tokens = [t for t in tokens if t.get("owner") == user.owner] if user.can("tokens.self.manage") else []
+    return jsonify({"enabled": service.mcp_state()["enabled"], "tokens": tokens})
 
 
 @integrations_bp.route("/mcp", methods=["PUT"])
@@ -40,7 +42,10 @@ def create_mcp_token():
     if not isinstance(data, dict):
         return jsonify({"error": "JSON body required"}), 400
     try:
-        created = service.create_token(data.get("name"), data.get("scope"))
+        user = permissions.principal()
+        created = service.create_token(
+            data.get("name"), data.get("scope"), owner=user.owner if user else None,
+        )
     except service.TokenLimitReached as exc:
         return jsonify({"error": str(exc)}), 409
     except ValueError as exc:
@@ -51,6 +56,11 @@ def create_mcp_token():
 @integrations_bp.route("/mcp/tokens/<token_id>", methods=["DELETE"])
 def delete_mcp_token(token_id):
     """Revoke a token by id — takes effect live (the gate reads fresh)."""
+    user = permissions.principal()
+    if user and not user.can("tokens.all.manage"):
+        entry = service.mcp_state()["tokens"].get(token_id, {})
+        if not user.can("tokens.self.manage") or entry.get("owner") != user.owner:
+            return jsonify({"error": "token not found"}), 404
     if not service.revoke_token(token_id):
         return jsonify({"error": "token not found"}), 404
     return "", 204

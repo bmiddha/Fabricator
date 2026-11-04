@@ -11,7 +11,7 @@ from typing import Dict, Optional
 from backend.core.config import get_config
 from backend.managed import ManagedConfigError, is_managed, managed_memory_gb
 from backend.server import java_manager
-from backend.server.java_compat import max_java_for
+from backend.server.java_compat import max_java_for, resolve_required_java, skip_java_enforcement
 from backend.server.jvm_args import parse_jvm_args
 from backend.server.manager import ServerManager
 from backend.server.players import service as players_service
@@ -46,6 +46,8 @@ class ServerProcessRegistry:
 
     def _build_command(self, server: Dict[str, object]) -> list[str]:
         if is_managed():
+            if server.get('loader') == 'velocity':
+                raise ManagedConfigError("Velocity proxies are not supported in managed mode")
             # C3 memory pin (fail-closed): refuse to build without a valid heap.
             gb = managed_memory_gb()
             if gb is None:
@@ -90,6 +92,7 @@ class ServerProcessRegistry:
         java_exec = self._resolve_java_exec(server)
         launch = server.get('launch')
         launch_type = launch.get('type') if isinstance(launch, dict) else None
+        default_program_args = [] if server.get('loader') == 'velocity' else ['nogui']
 
         # User-tuned flags, appended AFTER the installer's own jvm_args in every
         # branch below: the JVM takes the last occurrence of a repeated option,
@@ -104,7 +107,7 @@ class ServerProcessRegistry:
             jvm_args = list(jvm_args_raw) if jvm_args_raw is not None else []
             program_args_raw = launch.get('program_args')
             program_args = (
-                ['nogui'] if program_args_raw is None else list(program_args_raw)
+                default_program_args if program_args_raw is None else list(program_args_raw)
             )
             jar_name = str(launch.get('jar') or 'server.jar')
             return [
@@ -129,7 +132,7 @@ class ServerProcessRegistry:
             jvm_args = list(jvm_args_raw) if jvm_args_raw is not None else []
             program_args_raw = launch.get('program_args')
             program_args = (
-                ['nogui'] if program_args_raw is None else list(program_args_raw)
+                default_program_args if program_args_raw is None else list(program_args_raw)
             )
             return [
                 java_exec,
@@ -153,7 +156,7 @@ class ServerProcessRegistry:
                 *user_jvm_args,
                 '-jar',
                 'server.jar',
-                'nogui',
+                *default_program_args,
             ]
 
         # Unknown launch.type → installer/registry version mismatch (e.g. a
@@ -181,7 +184,11 @@ class ServerProcessRegistry:
         version = str(server.get('version') or '')
         maximum = max_java_for(version, server.get('loader'))
         try:
-            required = java_manager.required_java_for(version)
+            required = (
+                resolve_required_java(version, 'velocity').required_java
+                if server.get('loader') == 'velocity'
+                else java_manager.required_java_for(version)
+            )
             resolved = java_manager.find_compatible_java(required, maximum)
         except Exception:
             return 'java'
@@ -281,6 +288,8 @@ class ServerProcessRegistry:
         server: Dict[str, object],
         required_java_major: Optional[int] = None
     ) -> Dict[str, object]:
+        if server.get('loader') == 'velocity' and required_java_major is None and not skip_java_enforcement():
+            required_java_major = resolve_required_java(str(server.get('version') or ''), 'velocity').required_java
         try:
             manager = self._get_or_create_manager(server)
             # Rebuild command so a freshly-installed managed Java is picked up
@@ -296,7 +305,11 @@ class ServerProcessRegistry:
             # Fail-closed: map the launch-builder refusal to the clean stopped
             # shape (no 500). Boot autostart logs this via _start_one and moves on.
             return {"status": "stopped", "message": str(exc)}
-        if not manager.is_running and not manager.is_stopping:
+        if server.get('loader') == 'velocity' and not manager.is_running and not manager.is_stopping:
+            from backend.velocity.service import initialize, refresh_addresses
+            initialize(server)
+            refresh_addresses(server)
+        if server.get('loader') != 'velocity' and not manager.is_running and not manager.is_stopping:
             # Players forgotten while the server last ran leave usercache.json
             # now, before it is loaded again (see players/service.py). A
             # failure here only keeps them cached; it must not block the start.

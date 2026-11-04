@@ -6,6 +6,9 @@ import ConfirmModal from '../modals/ConfirmModal.vue'
 import { usePlayersStore } from '../../stores/players'
 import { useToast } from '../../composables/useToast'
 import { t } from '../../i18n'
+import { useCapabilities } from '../../composables/useCapabilities'
+
+const can = useCapabilities()
 
 const store = usePlayersStore()
 const toast = useToast()
@@ -59,7 +62,7 @@ function subtitle(entry) {
     </template>
 
     <div v-if="expanded">
-      <form class="ipban-add" @submit.prevent="submitIpBan">
+      <form v-if="can('players.bans.manage')" class="ipban-add" @submit.prevent="submitIpBan">
         <input v-model="ipInput" class="ipban-input" type="text" :placeholder="$t('players.ipBans.ipPlaceholder')" :disabled="submitting" />
         <input v-model="ipReasonInput" class="ipban-input ipban-input--reason" type="text" :placeholder="$t('players.ipBans.reasonPlaceholder')" :disabled="submitting" />
         <AppButton type="submit" variant="danger" size="sm" :loading="submitting">{{ $t('players.ipBans.banIp') }}</AppButton>
@@ -71,7 +74,7 @@ function subtitle(entry) {
             <span class="ipban-row__ip">{{ entry.ip }}</span>
             <span v-if="subtitle(entry)" class="ipban-row__sub">{{ subtitle(entry) }}</span>
           </div>
-          <AppButton variant="ghost" size="sm" @click="removeTarget = entry">{{ $t('players.unban') }}</AppButton>
+          <AppButton v-if="can('players.bans.manage')" variant="ghost" size="sm" @click="removeTarget = entry">{{ $t('players.unban') }}</AppButton>
         </li>
       </ul>
       <div v-else class="ipban-empty">{{ $t('players.ipBans.empty') }}</div>

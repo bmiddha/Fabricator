@@ -18,6 +18,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { useServerStore } from './server'
+import { useAuthStore } from './auth'
 import { t } from '../i18n'
 import * as api from '../api/players'
 
@@ -31,12 +32,16 @@ const ONLINE_POLL_MS = 5000
  * to read it from here instead.
  */
 async function optimistic(target, mutate, call) {
+  const auth = useAuthStore()
+  const server = useServerStore()
+  const revision = auth.revision
+  const id = server.currentServerId
   const before = target.value
   mutate()
   try {
     await call()
   } catch (e) {
-    target.value = before
+    if (revision === auth.revision && id === server.currentServerId) target.value = before
     throw e
   }
 }
@@ -47,12 +52,17 @@ async function optimistic(target, mutate, call) {
  * just that entry, so a concurrent change isn't discarded with it.
  */
 async function optimisticAdd(list, entry, call, reconcile) {
+  const auth = useAuthStore()
+  const server = useServerStore()
+  const revision = auth.revision
+  const id = server.currentServerId
   list.value = [...list.value, entry]
   try {
     const result = await call()
+    if (revision !== auth.revision || id !== server.currentServerId) return
     list.value = list.value.map(e => (e === entry ? reconcile(result) : e))
   } catch (e) {
-    list.value = list.value.filter(x => x !== entry)
+    if (revision === auth.revision && id === server.currentServerId) list.value = list.value.filter(x => x !== entry)
     throw e
   }
 }
@@ -89,11 +99,14 @@ export const usePlayersStore = defineStore('players', () => {
 
   async function loadAll() {
     const id = currentServerId.value
-    if (!id) return
+    const auth = useAuthStore()
+    const revision = auth.revision
+    if (!id || !auth.can('players.read', id)) return
     loading.value = true
     error.value = null
     try {
       const state = await api.getPlayersState(id)
+      if (id !== currentServerId.value || revision !== auth.revision) return
       whitelist.value = state.whitelist || []
       ops.value = state.ops || []
       bans.value = state.bans || []
@@ -112,12 +125,15 @@ export const usePlayersStore = defineStore('players', () => {
 
   async function loadOnline() {
     const id = currentServerId.value
-    if (!id || !isRunning.value) {
+    const auth = useAuthStore()
+    const revision = auth.revision
+    if (!id || !isRunning.value || !auth.can('players.read', id)) {
       online.value = []
       return
     }
     try {
-      online.value = await api.getOnlinePlayers(id)
+      const players = await api.getOnlinePlayers(id)
+      if (id === currentServerId.value && revision === auth.revision) online.value = players
     } catch (e) {
       // Don't surface — online polling is best-effort.
     }
@@ -259,6 +275,8 @@ export const usePlayersStore = defineStore('players', () => {
   }
 
   function resetState() {
+    stopOnlinePolling()
+    loading.value = false
     whitelist.value = []
     ops.value = []
     bans.value = []

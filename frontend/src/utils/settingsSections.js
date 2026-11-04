@@ -12,6 +12,12 @@ import { t } from '../i18n'
  */
 export const SETTINGS_SECTIONS = [
   {
+    key: 'dns',
+    label: 'dns.title',
+    description: 'dns.description',
+    hiddenWhenManaged: true
+  },
+  {
     key: 'autostart',
     label: 'settings.sections.autostart',
     description: 'settings.sections.autostartDescription',
@@ -48,11 +54,17 @@ export const SETTINGS_SECTIONS = [
 ]
 
 /** Sections available in a given context, in index order. */
-export function availableSettingsSections({ hasServer = false, managed = false, authEnabled = false } = {}) {
+export function availableSettingsSections({ hasServer = false, managed = false, authEnabled = false, can = () => true } = {}) {
   return SETTINGS_SECTIONS.filter((section) => {
     if (section.serverOnly && !hasServer) return false
     if (section.hiddenWhenManaged && managed) return false
     if (section.requiresAuth && !authEnabled) return false
+    const required = {
+      dns: ['dns.manage'],
+      autostart: ['server.autostart.write'], java: ['java.read', 'java.install'],
+      mcp: ['tokens.self.manage', 'tokens.all.manage', 'mcp.configure']
+    }[section.key]
+    if (required && !required.some(can)) return false
     return true
   })
 }

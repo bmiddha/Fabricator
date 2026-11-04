@@ -218,10 +218,15 @@ def logout():
 
 @auth_bp.route("/status", methods=["GET"])
 def status():
+    from backend.auth import oidc, permissions
+
     enabled = bool(current_app.config.get("FABRICATOR_AUTH_ENABLED"))
     needs_setup = bool(current_app.config.get("FABRICATOR_NEEDS_SETUP"))
     authenticated = (
-        enabled and not needs_setup and session.get("authenticated") is True
+        enabled and not needs_setup and (
+            oidc.session_user() is not None if oidc.provider()
+            else session.get("authenticated") is True and session.get("auth_method") != "oidc"
+        )
     )
     payload = {
         "enabled": enabled,
@@ -229,6 +234,10 @@ def status():
         "needs_setup": needs_setup,
         "managed": bool(current_app.config.get("FABRICATOR_MANAGED")),
     }
+    if oidc.provider():
+        payload.update(auth_mode="oidc", provider_name=oidc.provider().name)
+        if permissions.principal():
+            payload["user"] = permissions.principal().payload()
     # The version is a fingerprint, and this route answers without a credential
     # (it is on the public allowlist, so a login page can render). So it is
     # added only for a caller that has already proved itself — a session, or an

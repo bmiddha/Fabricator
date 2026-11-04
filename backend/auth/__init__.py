@@ -16,7 +16,7 @@ from datetime import timedelta
 
 from flask import current_app, g, jsonify, request, session
 
-from backend.auth import buckets, redaction, service
+from backend.auth import buckets, redaction, service, permissions, oidc
 from backend.auth.routes import auth_bp
 from backend.managed import is_managed
 
@@ -26,6 +26,8 @@ _PUBLIC_ENDPOINTS = frozenset(
         ("POST", "/api/auth/login"),
         ("GET", "/api/auth/status"),
         ("GET", "/api/health"),
+        ("GET", "/api/auth/oidc/login"),
+        ("GET", "/api/auth/oidc/callback"),
     }
 )
 
@@ -76,6 +78,18 @@ def _bearer_decision(credential: str):
     if match is None:
         return jsonify({"error": "invalid token"}), 401
     token_id, scope = match
+    entry = state["tokens"][token_id]
+    owner = entry.get("owner")
+    provider = oidc.provider()
+    user = None
+    if provider:
+        if not isinstance(owner, dict) or owner.get("issuer") != provider.issuer:
+            return jsonify({"error": "invalid token owner"}), 401
+        user = provider.users.get(owner.get("sub")) if isinstance(owner.get("sub"), str) else None
+        if user is None:
+            return jsonify({"error": "invalid token owner"}), 401
+    elif owner is not None:
+        return jsonify({"error": "invalid token owner"}), 401
     rule = request.url_rule
     if rule is None:
         # 405 / redirect / no matched rule: nothing to bucket -> fail closed.
@@ -86,6 +100,13 @@ def _bearer_decision(credential: str):
         return jsonify({"error": "forbidden for token"}), 403
     if bucket == "manage" and scope != "manage":
         return jsonify({"error": "insufficient scope"}), 403
+    if user:
+        if request.path != "/api/auth/status":
+            decision = permissions.authorize(user)
+            if decision is not None:
+                return decision
+        else:
+            g.principal = user
     service.touch_token_last_used(token_id)  # records AUTHORIZED use, not success
     # Mark the request for the response filter. This is the ONLY place a request
     # is declared token-authenticated, so redaction cannot apply to a session.
@@ -118,10 +139,28 @@ def _auth_gate():
     if scheme.lower() == "bearer":
         return _bearer_decision(credential.strip())
 
+    provider = oidc.provider()
+    if provider:
+        if request.path in {
+            "/api/auth/setup", "/api/auth/login", "/api/auth/change-password",
+            "/api/auth/enable", "/api/auth/disable",
+        }:
+            return jsonify({"error": "password authentication is unavailable in OIDC mode"}), 409
+        user = oidc.session_user()
+        if user:
+            g.principal = user
+        if (request.method, request.path) in _PUBLIC_ENDPOINTS:
+            return None
+        if user is None:
+            return jsonify({"error": "authentication required"}), 401
+        if request.path == "/api/auth/logout" and request.method == "POST":
+            return None
+        return permissions.authorize(user)
+
     # Configured: public allowlist, else require a session.
     if (request.method, request.path) in _PUBLIC_ENDPOINTS:
         return None
-    if session.get("authenticated") is True:
+    if session.get("authenticated") is True and session.get("auth_method") != "oidc":
         return None
     return jsonify({"error": "authentication required"}), 401
 
@@ -139,8 +178,11 @@ def init_auth(app) -> None:
     # flag is ignored when the hash comes from the env var, because there the
     # credential is declarative and the UI cannot override it (the same reason
     # change-password refuses in that mode).
+    provider = oidc.configure()
+    app.extensions["oidc"] = provider
     file_opt_out = (
         service.password_disabled_in_file() and not service.password_is_env_managed()
+        and provider is None
     )
     disabled = service.auth_disabled() or file_opt_out
 
@@ -166,10 +208,12 @@ def init_auth(app) -> None:
         # app.config before any request is served.
         app.config["SECRET_KEY"] = service.load_or_create_secret_key()
         # Setup mode iff no credential is configured yet (env or file).
-        app.config["FABRICATOR_NEEDS_SETUP"] = service.get_password_hash() is None
+        app.config["FABRICATOR_NEEDS_SETUP"] = provider is None and service.get_password_hash() is None
 
     app.register_blueprint(auth_bp)
+    app.register_blueprint(oidc.oidc_bp)
     app.before_request(_auth_gate)
     # Response half of the token path, registered beside the gate: one filter
     # that sees every response body a token can ever receive.
     app.after_request(redaction.redact_token_response)
+    app.after_request(permissions.filter_response)

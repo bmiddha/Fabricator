@@ -13,10 +13,12 @@ import { useBackupsStore } from '../../stores/backups'
 import { useAuthStore } from '../../stores/auth'
 import { useServerStore } from '../../stores/server'
 import { t } from '../../i18n'
+import { useCapabilities } from '../../composables/useCapabilities'
 
 const store = useBackupsStore()
 const auth = useAuthStore()
 const serverStore = useServerStore()
+const can = useCapabilities()
 
 // `label` is an i18n key.
 const TYPE_FILTERS = [
@@ -83,6 +85,7 @@ watch(
 
 onMounted(() => {
   if (auth.managed) return
+  store.resetState()
   store.loadAll()
 })
 
@@ -100,8 +103,9 @@ onUnmounted(() => {
         <p class="backups-page__sub">{{ $t('backups.subtitle') }}</p>
       </div>
       <div class="backups-page__top-actions">
-        <AppButton variant="ghost" size="md" @click="store.openCreateConfig()">{{ $t('backups.schedules') }}</AppButton>
+        <AppButton v-if="can('backups.config.read') || can('backups.config.write')" variant="ghost" size="md" @click="store.openCreateConfig()">{{ $t('backups.schedules') }}</AppButton>
         <AppButton
+          v-if="can('worlds.import')"
           variant="ghost"
           size="md"
           :disabled="store.activeJob?.active || store.importUploading"
@@ -110,6 +114,7 @@ onUnmounted(() => {
           {{ $t('backups.importWorld') }}
         </AppButton>
         <AppButton
+          v-if="can('backups.create')"
           variant="primary"
           size="md"
           :disabled="store.activeJob?.active"
@@ -121,7 +126,7 @@ onUnmounted(() => {
     </header>
 
     <!-- Stats strip -->
-    <BackupStatsStrip :summary="store.summary" :loading="store.summaryLoading" />
+    <BackupStatsStrip v-if="can('backups.list')" :summary="store.summary" :loading="store.summaryLoading" />
 
     <!-- Active job pill -->
     <div v-if="store.activeJob?.active" class="backups-page__job">
@@ -197,6 +202,7 @@ onUnmounted(() => {
     </div>
 
     <SnapshotsTable
+      v-if="can('backups.list')"
       :snapshots="filtered"
       :configs-by-id="configsById"
       :server-id="serverStore.currentServerId"
@@ -224,6 +230,7 @@ onUnmounted(() => {
 
     <!-- Delete-config modal (explicit purge checkbox, unchecked by default) -->
     <DeleteBackupConfigModal
+      :can-purge="can('backups.delete')"
       :show="store.showDeleteConfigModal"
       :config="store.configToDelete"
       :config-snapshots="snapshotsForDeleteModal"

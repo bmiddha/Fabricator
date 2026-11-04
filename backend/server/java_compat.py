@@ -62,7 +62,7 @@ def _parse_mc_version(version: str) -> tuple[int, int, int] | None:
     return major, minor, patch
 
 
-def resolve_required_java(mc_version: str) -> JavaCompatibility:
+def resolve_required_java(mc_version: str, loader: Optional[str] = None) -> JavaCompatibility:
     """Resolve Java requirement for a Minecraft version.
 
     Rules:
@@ -73,6 +73,13 @@ def resolve_required_java(mc_version: str) -> JavaCompatibility:
     - 1.26+ -> Java 25
     - 1.22.x - 1.25.x -> unknown (warn)
     """
+    if str(loader or "").strip().lower() == "velocity":
+        return JavaCompatibility(
+            mc_version=mc_version,
+            required_java=21,
+            confidence="high",
+            reason="Velocity requires Java 21 or newer; its version is not a Minecraft version.",
+        )
     parsed = _parse_mc_version(mc_version)
     if not parsed:
         return JavaCompatibility(

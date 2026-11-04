@@ -9,12 +9,15 @@ import { usePlayersStore } from '../../stores/players'
 import { useServerStore } from '../../stores/server'
 import { useToast } from '../../composables/useToast'
 import { t } from '../../i18n'
+import { useCapabilities } from '../../composables/useCapabilities'
 
 const store = usePlayersStore()
 const serverStore = useServerStore()
 const toast = useToast()
+const can = useCapabilities()
 
 onMounted(async () => {
+  store.resetState()
   await store.loadAll()
   if (store.isRunning) store.startOnlinePolling()
 })
@@ -296,7 +299,7 @@ function onToggleEnforce(value) {
     </div>
 
     <!-- Whitelist enforcement -->
-    <section class="whitelist-settings">
+    <section v-if="can('players.whitelist.manage')" class="whitelist-settings">
       <ToggleRow
         v-if="store.isRunning"
         :label="$t('players.whitelistRuntime')"
@@ -330,7 +333,7 @@ function onToggleEnforce(value) {
     </div>
 
     <!-- Add a player who hasn't joined -->
-    <form class="player-add" @submit.prevent="addPlayer('whitelist')">
+    <form v-if="can('players.whitelist.manage') || can('players.ops.manage') || can('players.bans.manage')" class="player-add" @submit.prevent="can('players.whitelist.manage') && addPlayer('whitelist')">
       <input
         v-model="addName"
         class="player-add__input"
@@ -338,9 +341,9 @@ function onToggleEnforce(value) {
         :placeholder="$t('players.addPlaceholder')"
         :disabled="addBusy"
       />
-      <AppButton type="submit" variant="primary" size="sm" :loading="addBusy" :disabled="!addName.trim()">{{ $t('players.addWhitelist') }}</AppButton>
-      <AppButton type="button" variant="ghost" size="sm" :disabled="!addName.trim() || addBusy" @click="addPlayer('op')">{{ $t('players.addOp') }}</AppButton>
-      <AppButton type="button" variant="danger" size="sm" :disabled="!addName.trim() || addBusy" @click="addPlayer('ban')">{{ $t('players.ban') }}</AppButton>
+      <AppButton v-if="can('players.whitelist.manage')" type="submit" variant="primary" size="sm" :loading="addBusy" :disabled="!addName.trim()">{{ $t('players.addWhitelist') }}</AppButton>
+      <AppButton v-if="can('players.ops.manage')" type="button" variant="ghost" size="sm" :disabled="!addName.trim() || addBusy" @click="addPlayer('op')">{{ $t('players.addOp') }}</AppButton>
+      <AppButton v-if="can('players.bans.manage')" type="button" variant="danger" size="sm" :disabled="!addName.trim() || addBusy" @click="addPlayer('ban')">{{ $t('players.ban') }}</AppButton>
     </form>
 
     <!-- Loading state (initial load only) -->
@@ -381,13 +384,14 @@ function onToggleEnforce(value) {
         <!-- Default: role chips + actions -->
         <div v-else class="player-row__roles">
           <button
+            v-if="can('players.whitelist.manage')"
             :class="['role-chip', { 'role-chip--on': p.isWhitelisted }]"
             type="button"
             :title="p.isWhitelisted ? $t('players.removeFromWhitelist') : $t('players.addToWhitelist')"
             @click="toggleWhitelist(p)"
           >{{ p.isWhitelisted ? $t('players.whitelisted') : $t('players.addWhitelist') }}</button>
 
-          <span v-if="p.isOp" class="op-control">
+          <span v-if="p.isOp && can('players.ops.manage')" class="op-control">
             <button class="role-chip role-chip--on role-chip--op" type="button" :title="$t('players.removeOperator')" @click="toggleOp(p)">{{ $t('players.op') }}</button>
             <select
               :value="p.opLevel"
@@ -399,14 +403,14 @@ function onToggleEnforce(value) {
               <option v-for="l in [1,2,3,4]" :key="l" :value="l">{{ $t('players.levelShort', { level: l }) }}</option>
             </select>
           </span>
-          <button v-else class="role-chip" type="button" :title="$t('players.makeOperator')" @click="toggleOp(p)">{{ $t('players.addOp') }}</button>
+          <button v-else-if="can('players.ops.manage')" class="role-chip" type="button" :title="$t('players.makeOperator')" @click="toggleOp(p)">{{ $t('players.addOp') }}</button>
 
           <span class="player-row__spacer" />
 
-          <AppButton v-if="p.isOnline" variant="ghost" size="sm" @click="startReason(p.name, 'kick')">{{ $t('players.kick') }}</AppButton>
-          <AppButton v-if="p.isBanned" variant="ghost" size="sm" @click="unban(p)">{{ $t('players.unban') }}</AppButton>
-          <AppButton v-else variant="danger" size="sm" @click="startReason(p.name, 'ban')">{{ $t('players.ban') }}</AppButton>
-          <AppButton v-if="canForget(p)" variant="ghost" size="sm" :title="$t('players.forgetHint')" @click="forget(p)">{{ $t('players.forget') }}</AppButton>
+          <AppButton v-if="p.isOnline && can('players.kick')" variant="ghost" size="sm" @click="startReason(p.name, 'kick')">{{ $t('players.kick') }}</AppButton>
+          <AppButton v-if="p.isBanned && can('players.bans.manage')" variant="ghost" size="sm" @click="unban(p)">{{ $t('players.unban') }}</AppButton>
+          <AppButton v-if="!p.isBanned && can('players.bans.manage')" variant="danger" size="sm" @click="startReason(p.name, 'ban')">{{ $t('players.ban') }}</AppButton>
+          <AppButton v-if="canForget(p) && can('players.known.delete')" variant="ghost" size="sm" :title="$t('players.forgetHint')" @click="forget(p)">{{ $t('players.forget') }}</AppButton>
         </div>
       </li>
       <li v-if="!filteredPlayers.length" class="player-list__empty">{{ emptyMessage }}</li>

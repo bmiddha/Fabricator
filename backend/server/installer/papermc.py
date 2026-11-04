@@ -1,4 +1,4 @@
-"""PaperMC-family installers (Paper, Folia) using the PaperMC Fill v3 API.
+"""PaperMC installers (Paper, Folia, Velocity) using the PaperMC Fill v3 API.
 
 Both Paper and Folia are served by the same Fill v3 API at
 ``https://fill.papermc.io/v3/projects/<project>``; the only difference is the
@@ -58,6 +58,9 @@ class PaperMCInstaller(InstallerBase):
             )
 
     content_kind = "plugin"
+    writes_eula = True
+    program_args = ["nogui"]
+    requires_sha256 = False
 
     # ---------- API helpers ----------
 
@@ -150,6 +153,11 @@ class PaperMCInstaller(InstallerBase):
         download = (build.get("downloads") or {}).get(_SERVER_DOWNLOAD_KEY) or {}
         download_url = download.get("url")
         expected_sha256 = (download.get("checksums") or {}).get("sha256")
+        if self.requires_sha256 and not expected_sha256:
+            return self._fail(
+                progress_callback, "Velocity build is missing its required SHA-256 checksum",
+                mc_version=mc_version, build=build_number,
+            )
         if not download_url:
             msg = (
                 f"{self.PROJECT.capitalize()} build {build_number} for "
@@ -220,8 +228,9 @@ class PaperMCInstaller(InstallerBase):
                 build=build_number,
             )
 
-        self._report(progress_callback, "writing_eula")
-        self._write_eula(accepted=True)
+        if self.writes_eula:
+            self._report(progress_callback, "writing_eula")
+            self._write_eula(accepted=True)
 
         self._report(progress_callback, "done")
         return InstallResult(
@@ -243,7 +252,7 @@ class PaperMCInstaller(InstallerBase):
                 type="jar",
                 jar="server.jar",
                 jvm_args=[],
-                program_args=["nogui"],
+                program_args=list(self.program_args),
             ),
         )
 
@@ -277,3 +286,41 @@ class FoliaInstaller(PaperMCInstaller):
         # Folia needs region-thread-safe plugins; do NOT silently accept
         # generic Paper/Spigot plugins that may not be Folia-aware.
         return ["folia"]
+
+
+class VelocityInstaller(PaperMCInstaller):
+    """Velocity uses Fill builds, but is a proxy rather than a game server."""
+
+    PROJECT = "velocity"
+    writes_eula = False
+    program_args = []
+    requires_sha256 = True
+    content_kind = "plugin"
+
+    @property
+    def loader_name(self) -> str:
+        return "velocity"
+
+    @property
+    def modrinth_loader_facets(self) -> List[str]:
+        return ["velocity"]
+
+    @staticmethod
+    def _canonicalize_mc_version(version: str) -> str:
+        # Velocity's 3.3.0 is a project version, not Mojang's 1.x.0 naming.
+        return version
+
+    def get_minecraft_versions(self) -> List[Dict[str, Any]]:
+        versions = super().get_minecraft_versions()
+        for entry in versions:
+            entry["stable"] = "-" not in entry["version"]
+            entry["type"] = "release" if entry["stable"] else "snapshot"
+        return versions
+
+    def install_with_config(self, mc_version, server_config, loader_version=None,
+                            progress_callback=None) -> InstallResult:
+        result = self.install(mc_version, loader_version, progress_callback)
+        if result.success:
+            from backend.velocity.service import initialize
+            initialize(server_config, install_path=self.install_path)
+        return result

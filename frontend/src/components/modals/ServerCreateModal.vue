@@ -79,6 +79,7 @@
           {{ $t('createServer.customServer') }}
         </button>
         <button
+          v-if="!isVelocity"
           type="button"
           role="tab"
           class="mode-toggle-btn"
@@ -318,8 +319,8 @@
         <div class="form-row">
           <div class="form-group">
             <div class="version-label-row">
-              <label for="minecraft-version">{{ $t('createServer.minecraftVersion') }}</label>
-              <label class="snapshot-toggle">
+              <label for="minecraft-version">{{ isVelocity ? $t('velocity.version') : $t('createServer.minecraftVersion') }}</label>
+              <label v-if="!isVelocity" class="snapshot-toggle">
                 <input type="checkbox" v-model="showSnapshots">
                 <span>{{ $t('createServer.showSnapshots') }}</span>
               </label>
@@ -347,7 +348,7 @@
             <span v-if="javaRequirementWarning" class="form-hint warning-hint">{{ javaRequirementWarning }}</span>
           </div>
 
-          <FormField :label="$t('properties.identity.modLoader')">
+          <FormField :label="$t('velocity.instanceType')">
             <template #default="{ id, describedBy }">
               <select
                 :id="id"
@@ -402,7 +403,7 @@
 
 
       <!-- Gameplay Settings -->
-      <Panel :title="$t('properties.gameplay.title')">
+      <Panel v-if="!isVelocity" :title="$t('properties.gameplay.title')">
 
         <div class="form-row">
           <FormField :label="$t('properties.identity.maxPlayers')">
@@ -460,7 +461,7 @@
       </Panel>
 
       <!-- World Settings -->
-      <Panel :title="$t('createServer.world')">
+      <Panel v-if="!isVelocity" :title="$t('createServer.world')">
 
         <FormField :label="$t('createServer.worldName')" :hint="$t('createServer.worldNameHint')">
           <template #default="{ id, describedBy }">
@@ -534,6 +535,10 @@
 
       <!-- Advanced Settings -->
       <Panel :title="$t('createServer.advanced')">
+        <p v-if="isVelocity" class="form-hint">{{ $t('velocity.createHint') }}</p>
+        <FormField v-if="isVelocity" :label="$t('createServer.javaPath')" :hint="$t('createServer.javaPathHint')" v-slot="{ id, describedBy }">
+          <input :id="id" v-model.trim="formData.javaPath" :aria-describedby="describedBy" @blur="refreshJavaRequirement">
+        </FormField>
 
         <div class="form-row">
           <FormField :label="$t('createServer.memoryMin')">
@@ -566,7 +571,7 @@
             </template>
           </FormField>
 
-          <FormField :label="$t('createServer.simulationDistance')">
+          <FormField v-if="!isVelocity" :label="$t('createServer.simulationDistance')">
             <template #default="{ id, describedBy }">
               <input
                 :id="id"
@@ -581,7 +586,7 @@
           </FormField>
         </div>
 
-        <div class="form-checkboxes">
+        <div v-if="!isVelocity" class="form-checkboxes">
           <label class="checkbox-label">
             <input type="checkbox" v-model="formData.onlineMode">
             <span>{{ $t('createServer.onlineMode') }}</span>
@@ -602,7 +607,7 @@
       </Panel>
 
       <!-- EULA Agreement -->
-      <Panel :title="$t('createServer.eulaTitle')">
+      <Panel v-if="!isVelocity" :title="$t('createServer.eulaTitle')">
         <label class="create-eula">
           <input type="checkbox" v-model="formData.acceptEula" required>
           <div class="create-eula__body">
@@ -625,7 +630,7 @@
         <AppButton
           variant="primary"
           size="md"
-          :disabled="creating || !formData.acceptEula"
+          :disabled="creating || (!isVelocity && !formData.acceptEula)"
           :loading="creating"
           @click="handleCreate"
         >
@@ -737,7 +742,8 @@ export default {
         { value: 'purpur',     label: 'Purpur'     },
         { value: 'folia',      label: 'Folia'      },
         { value: 'pufferfish', label: 'Pufferfish' },
-        { value: 'vanilla',    label: 'Vanilla'    }
+        { value: 'vanilla',    label: 'Vanilla'    },
+        { value: 'velocity',   label: 'Velocity'   }
       ],
       formData: this.defaultFormData()
     };
@@ -753,6 +759,7 @@ export default {
     this.loadGameVersions()
   },
   computed: {
+    isVelocity() { return this.formData.loader === 'velocity' },
     // Module-scope imports are not visible to an Options API template, so the
     // shared copy is surfaced here rather than duplicated as a literal.
     lostContactMessage() {
@@ -770,7 +777,7 @@ export default {
     },
     filteredGameVersions() {
       const pool = this.compatibleGameVersions || this.gameVersions
-      if (this.showSnapshots) return pool
+      if (this.showSnapshots || this.isVelocity) return pool
       return pool.filter(v => v.stable)
     },
     // Once a search/link-resolved pack is chosen, narrow the version select to
@@ -985,6 +992,14 @@ export default {
   },
   methods: {
     buildServerPayload() {
+      if (this.isVelocity) {
+        return {
+          name: this.formData.name, version: this.formData.version, loader: 'velocity',
+          port: this.formData.port, installPath: this.formData.installPath,
+          memoryMin: this.formData.memoryMin, memory: this.formData.memory,
+          javaPath: this.formData.javaPath || undefined
+        }
+      }
       return {
         name: this.formData.name,
         version: this.formData.version,
@@ -1606,7 +1621,7 @@ export default {
         return
       }
 
-      if (!this.formData.acceptEula) {
+      if (!this.isVelocity && !this.formData.acceptEula) {
         this.toast.warning(this.$t('createServer.eulaRequired'), this.$t('createServer.eulaRequiredTitle'))
         return
       }

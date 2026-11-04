@@ -576,7 +576,8 @@ class ServerManager:
                     "message": "No server command configured. Set SERVER_COMMAND or pass a command list.",
                 }
 
-            self._ensure_eula()
+            if self.loader != "velocity":
+                self._ensure_eula()
             java_info = self.probe_java()
             if not java_info.get("available"):
                 return {
@@ -651,7 +652,7 @@ class ServerManager:
         try:
             if proc.stdin and not proc.stdin.closed:
                 try:
-                    proc.stdin.write("stop\n")
+                    proc.stdin.write("shutdown\n" if self.loader == "velocity" else "stop\n")
                     proc.stdin.flush()
                 except Exception:
                     logger.warning(

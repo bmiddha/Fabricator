@@ -22,6 +22,14 @@ logger = logging.getLogger(__name__)
 players_bp = Blueprint("players", __name__, url_prefix="/api")
 
 
+@players_bp.before_request
+def reject_proxy_player_management():
+    server_id = (request.view_args or {}).get("server_id")
+    server = storage.get_server(server_id) if server_id else None
+    if server and str(server.get("loader", "")).lower() == "velocity":
+        return jsonify({"error": "Player administration is not supported on Velocity proxies; manage the backend game server"}), 400
+
+
 def _registry():
     """Lazy accessor for the process registry (mirrors the same helper in
     server/routes.py — kept local to avoid importing private helpers from

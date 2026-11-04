@@ -10,11 +10,13 @@ import ConfirmModal from '../modals/ConfirmModal.vue'
 import { getMcp, setMcpEnabled, createMcpToken, deleteMcpToken } from '../../api/mcp'
 import { buildMcpClientConfig } from '../../config/mcpClientConfig'
 import { i18n, t } from '../../i18n'
+import { useAuthStore } from '../../stores/auth'
 
 // Managed mode hides this panel entirely; the parent gates on auth.managed
 // (same as JavaManagerPanel), so nothing here needs to re-check it.
 
 const toast = useToast()
+const auth = useAuthStore()
 
 const enabled = ref(false)
 const tokens = ref([])
@@ -156,6 +158,7 @@ onBeforeUnmount(() => {
     </template>
 
     <p class="mcp-intro">{{ $t('mcp.intro') }}</p>
+    <p v-if="auth.oidcMode" class="mcp-note">{{ $t('access.tokenOwnership') }}</p>
 
     <i18n-t keypath="mcp.betaNote" tag="p" class="mcp-beta-note">
       <template #beta><strong>{{ $t('mcp.betaLabel') }}</strong></template>
@@ -163,6 +166,7 @@ onBeforeUnmount(() => {
     </i18n-t>
 
     <ToggleRow
+      v-if="auth.can('mcp.configure')"
       :model-value="enabled"
       :label="$t('mcp.enable')"
       :disabled="toggling"
@@ -175,7 +179,7 @@ onBeforeUnmount(() => {
     <section v-if="enabled || tokens.length" class="mcp-section">
       <h4 class="mcp-section__title">{{ $t('mcp.tokens') }}</h4>
 
-      <form v-if="enabled" class="mcp-create" @submit.prevent="onCreate">
+      <form v-if="enabled && auth.can('tokens.self.manage')" class="mcp-create" @submit.prevent="onCreate">
         <FormField :label="$t('mcp.name')" :hint="$t('mcp.nameHint')" v-slot="{ id, describedBy }">
           <input
             :id="id"
@@ -224,6 +228,7 @@ onBeforeUnmount(() => {
           <thead>
             <tr>
               <th>{{ $t('mcp.name') }}</th>
+              <th v-if="auth.oidcMode">{{ $t('access.owner') }}</th>
               <th>{{ $t('mcp.access') }}</th>
               <th>{{ $t('mcp.created') }}</th>
               <th>{{ $t('mcp.lastUsed') }}</th>
@@ -233,6 +238,7 @@ onBeforeUnmount(() => {
           <tbody>
             <tr v-for="t in tokens" :key="t.id">
               <td>{{ t.name }}</td>
+              <td v-if="auth.oidcMode">{{ t.owner?.sub || '—' }}</td>
               <td>{{ scopeLabel(t.scope) }}</td>
               <td>{{ shortDate(t.created_at) }}</td>
               <td>{{ relativeTime(t.last_used_at) }}</td>

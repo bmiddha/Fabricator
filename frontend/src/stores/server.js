@@ -1,5 +1,6 @@
 import { computed, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
+import { useAuthStore } from './auth'
 import { useRouter } from 'vue-router'
 import {
   checkModUpdates,
@@ -110,6 +111,13 @@ export const useServerStore = defineStore('server', () => {
   const router = useRouter()
   const toast = useToast()
   const prefs = usePreferencesStore()
+  const auth = useAuthStore()
+  const can = (permission) => auth.can(permission, currentServerId.value)
+  function requestScope() {
+    const id = currentServerId.value
+    const revision = auth.revision
+    return () => id === currentServerId.value && revision === auth.revision
+  }
 
   // ---------- State ----------
   // Pushed by ServerLayout via watchers with immediate: true. We do NOT call
@@ -414,7 +422,7 @@ export const useServerStore = defineStore('server', () => {
     }
   })
 
-  const canEditSettings = computed(() => serverStatus.value.status !== 'running')
+  const canEditSettings = computed(() => can('server.settings.read') && can('server.settings.write') && serverStatus.value.status !== 'running')
 
   const ramMetrics = computed(() => {
     const runtimeRam = server.value?.runtime?.ram
@@ -518,8 +526,10 @@ export const useServerStore = defineStore('server', () => {
   // ---------- Actions ----------
 
   async function loadServers() {
+    const revision = auth.revision
     try {
       const list = await getServers()
+      if (revision !== auth.revision) return { ok: false }
       if (Array.isArray(list)) {
         serversList.value = list
       }
@@ -546,10 +556,14 @@ export const useServerStore = defineStore('server', () => {
   }
 
   async function loadServer(options = {}) {
+    if (!currentServerId.value || !can('server.view')) return
+    const id = currentServerId.value
+    const revision = auth.revision
     const { silent = false } = options
     if (!silent) serverLoading.value = true
     try {
       const data = await getServer(currentServerId.value, { heap: prefs.showHeapStats })
+      if (id !== currentServerId.value || revision !== auth.revision) return
       server.value = data
       // Mirror the freshly augmented record into serversList so the sidebar
       // dropdown trigger reflects the same status as the detail page header.
@@ -568,17 +582,22 @@ export const useServerStore = defineStore('server', () => {
         serverSettings.value = mappedSettings
       }
     } catch (error) {
+      if (id !== currentServerId.value || revision !== auth.revision) return
+      if (error.status === 403 || error.status === 404) resetState()
       console.error('Failed to load server:', error)
       toast.error(t('servers.detailsLoadFailed'), t('common.error'))
     } finally {
-      if (!silent) serverLoading.value = false
+      if (!silent && id === currentServerId.value && revision === auth.revision) serverLoading.value = false
     }
   }
 
   async function loadMods() {
+    const isCurrent = requestScope()
+    if (!can('mods.read')) return
     modsLoading.value = true
     try {
       const files = await getInstalledMods(currentServerId.value)
+      if (!isCurrent()) return
       const base = files.map((file) => {
         // `modrinth` is the install manifest the backend recorded at install
         // time — authoritative project identity, title and icon. Jars dropped
@@ -607,23 +626,28 @@ export const useServerStore = defineStore('server', () => {
       // entries are already complete and are skipped inside the enricher.
       // `serverId` lets it identify the folder by content hash in one request
       // instead of guessing project slugs per filename (#52).
-      installedMods.value = await enrichInstalledModsWithModrinth(base, {
+      const enriched = await enrichInstalledModsWithModrinth(base, {
         serverId: currentServerId.value
       })
+      if (!isCurrent()) return
+      installedMods.value = enriched
       // Not awaited: the list is usable before the update check answers.
       loadModUpdates()
     } catch (error) {
+      if (!isCurrent()) return
       console.error('Failed to load mods:', error)
       toast.error(t('mods.loadFailed'), t('common.error'))
     } finally {
-      modsLoading.value = false
+      if (isCurrent()) modsLoading.value = false
     }
   }
 
   async function loadModUpdates() {
+    const isCurrent = requestScope()
     const id = currentServerId.value
     try {
       const { updates, dependencies } = await checkModUpdates(id)
+      if (!isCurrent()) return
       // Ignore a late answer for a server the user has since left.
       if (id !== currentServerId.value) return
       modUpdates.value = updates || {}
@@ -717,10 +741,14 @@ export const useServerStore = defineStore('server', () => {
   }
 
   async function loadLogs(limit = 1000) {
+    if (!can('server.logs.read')) return
     if (!server.value || logsLoading.value) return
     logsLoading.value = true
     try {
-      logs.value = await getServerLogs(currentServerId.value, { limit })
+      const id = currentServerId.value
+      const revision = auth.revision
+      const data = await getServerLogs(id, { limit })
+      if (id === currentServerId.value && revision === auth.revision) logs.value = data
     } catch (error) {
       console.error('Failed to load logs:', error)
       toast.error(t('console.logsLoadFailed'), t('common.error'))
@@ -734,12 +762,16 @@ export const useServerStore = defineStore('server', () => {
   }
 
   async function openFileBrowser(path = '') {
+    if (!can('files.list')) return
+    const isCurrent = requestScope()
     fileBrowser.value.loading = true
     fileBrowser.value.error = null
     try {
       const data = await browseServerFiles(currentServerId.value, path ? { path } : {})
+      if (!isCurrent()) return
       fileBrowser.value = { ...data, entries: data.entries, loading: false, error: null }
     } catch (error) {
+      if (!isCurrent()) return
       console.error('Failed to browse files:', error)
       fileBrowser.value = { currentPath: path, entries: [], loading: false, error: error.message || t('files.loadFailed') }
     }
@@ -775,6 +807,8 @@ export const useServerStore = defineStore('server', () => {
    * replace them — the backend refuses by default rather than clobbering.
    */
   async function uploadFiles(files, { overwrite = false } = {}) {
+    const isCurrent = requestScope()
+    const id = currentServerId.value
     const list = Array.from(files || [])
     if (!list.length) return { uploaded: [], conflicts: [] }
 
@@ -783,6 +817,7 @@ export const useServerStore = defineStore('server', () => {
     const conflicts = []
 
     for (const file of list) {
+      if (!isCurrent()) return { uploaded: [], conflicts: [] }
       const row = reactive({
         id: ++uploadRowId,
         name: file.name,
@@ -794,14 +829,16 @@ export const useServerStore = defineStore('server', () => {
       fileUploads.value = [...fileUploads.value, row]
 
       try {
-        await uploadServerFile(currentServerId.value, dirPath, file, {
+        await uploadServerFile(id, dirPath, file, {
           overwrite,
           onProgress: (pct) => { row.pct = pct },
           registerAbort: (abort) => { row.abort = abort },
         })
+        if (!isCurrent()) return { uploaded: [], conflicts: [] }
         row.status = 'done'
         uploaded.push(file.name)
       } catch (error) {
+        if (!isCurrent()) return { uploaded: [], conflicts: [] }
         row.error = error?.message || t('files.uploadFailed')
         if (error?.status === 409 && error?.data?.code === 'file-exists') {
           // Not a failure the user has to read: the replace prompt takes this
@@ -952,6 +989,8 @@ export const useServerStore = defineStore('server', () => {
   }
 
   async function openFile(path) {
+    if (!can('files.read')) return
+    const isCurrent = requestScope()
     if (!isTextFile(path)) {
       toast.error(t('files.notEditable'), t('nav.files'))
       return
@@ -959,8 +998,10 @@ export const useServerStore = defineStore('server', () => {
     fileEditor.value = { path, content: '', originalContent: '', loading: true, saving: false, error: null }
     try {
       const file = await getServerFile(currentServerId.value, path)
+      if (!isCurrent() || fileEditor.value.path !== path) return
       fileEditor.value = { path: file.path, content: file.content, originalContent: file.content, loading: false, saving: false, error: null }
     } catch (error) {
+      if (!isCurrent()) return
       const message = error?.message || t('files.openFailed')
       fileEditor.value = { path: null, content: '', originalContent: '', loading: false, saving: false, error: message }
       toast.error(message, t('nav.files'))
@@ -968,14 +1009,17 @@ export const useServerStore = defineStore('server', () => {
   }
 
   async function saveFile() {
+    const isCurrent = requestScope()
     if (!fileEditor.value.path || fileEditor.value.saving) return
     fileEditor.value.saving = true
     fileEditor.value.error = null
     try {
       await saveServerFile(currentServerId.value, fileEditor.value.path, fileEditor.value.content)
+      if (!isCurrent()) return
       fileEditor.value.originalContent = fileEditor.value.content
       toast.success(t('files.saved'), t('nav.files'))
     } catch (error) {
+      if (!isCurrent()) return
       const message = error?.message || t('files.saveFailed')
       fileEditor.value.error = message
       toast.error(message, t('nav.files'))
@@ -1146,8 +1190,11 @@ export const useServerStore = defineStore('server', () => {
   }
 
   async function fetchModpackProgress() {
+    if (!can('modpacks.install')) return
+    const isCurrent = requestScope()
     try {
       const progress = await getModpackInstallProgress(currentServerId.value)
+      if (!isCurrent()) return
       modpackProgress.value = progress?.active ? progress : null
     } catch {
       // polling failure is non-critical — silently swallow
@@ -1161,9 +1208,11 @@ export const useServerStore = defineStore('server', () => {
   // Returns true while the worker is still going, so the caller's poll knows
   // whether to schedule another tick.
   async function fetchServerInstallProgress() {
-    if (!currentServerId.value) return false
+    if (!currentServerId.value || (!can('server.install') && !can('server.upgrade'))) return false
+    const isCurrent = requestScope()
     try {
       const progress = await getServerInstallProgress(currentServerId.value)
+      if (!isCurrent()) return false
       serverInstallProgress.value = progress?.active ? progress : null
     } catch {
       // polling failure is non-critical — silently swallow
@@ -1444,6 +1493,7 @@ export const useServerStore = defineStore('server', () => {
   }
 
   async function performServerAction(action, fn, successMessage) {
+    if (!can(`server.${action}`)) return
     if (actionState.value[action]) return
     actionState.value[action] = true
     try {
@@ -1455,7 +1505,7 @@ export const useServerStore = defineStore('server', () => {
       }
     } catch (error) {
       console.error(`Failed to ${action} server:`, error)
-      if ((action === 'start' || action === 'restart') && (error.data?.java_missing || error.data?.java_too_old)) {
+      if (auth.can('java.read') && auth.can('java.install') && (action === 'start' || action === 'restart') && (error.data?.java_missing || error.data?.java_too_old)) {
         pendingJavaAction.value = action
         showJavaModal.value = true
       } else {
@@ -1522,7 +1572,7 @@ export const useServerStore = defineStore('server', () => {
       }
     } catch (error) {
       console.error('Failed to install server:', error)
-      if (error.data?.java_missing || error.data?.java_too_old) {
+      if (auth.can('java.read') && auth.can('java.install') && (error.data?.java_missing || error.data?.java_too_old)) {
         // The backend's Java-guard 400 already cleared the install-progress
         // marker, so the retry via the Java modal is unblocked. No polling
         // on this path.
@@ -1574,6 +1624,7 @@ export const useServerStore = defineStore('server', () => {
   }
 
   async function sendConsoleCommand() {
+    if (!can('server.console.execute')) return
     if (!canSendCommand.value || !consoleCommand.value.trim()) return
     const command = consoleCommand.value.trim()
     commandSending.value = true
@@ -1600,14 +1651,17 @@ export const useServerStore = defineStore('server', () => {
   }
 
   async function handleSaveSettings(settings) {
+    const isCurrent = requestScope()
     if (!server.value) return
     try {
       const updated = await updateServerSettings(currentServerId.value, settings)
+      if (!isCurrent()) return
       server.value = updated
       serverSettings.value = defaultSettings(updated)
       await loadServers()
       toast.success(t('properties.saved'), t('properties.savedTitle'))
     } catch (error) {
+      if (!isCurrent()) return
       console.error('Failed to save settings:', error)
       toast.error(error.message || t('properties.saveFailed'), t('common.error'))
     }
@@ -1624,14 +1678,17 @@ export const useServerStore = defineStore('server', () => {
   const autoStartMode = computed(() => server.value?.autoStart || 'never')
 
   async function setAutoStartMode(mode) {
+    const isCurrent = requestScope()
     if (!server.value) return
     const previous = server.value.autoStart || 'never'
     if (mode === previous) return
     server.value = { ...server.value, autoStart: mode }  // optimistic
     try {
       await setServerAutoStart(currentServerId.value, mode)
+      if (!isCurrent()) return
       toast.success(t('settings.autostart.updated'), t('nav.settings'))
     } catch (error) {
+      if (!isCurrent()) return
       server.value = { ...server.value, autoStart: previous }  // rollback
       toast.error(error.message || t('settings.autostart.updateFailed'), t('common.error'))
     }
@@ -1640,6 +1697,10 @@ export const useServerStore = defineStore('server', () => {
   // Performs the same job as the layout's previous resetDashboardState().
   // setup-syntax Pinia stores have no automatic $reset, so we write it explicitly.
   function resetState() {
+    clearFileSearch()
+    fileUploads.value.forEach(row => row.abort?.())
+    fileUploads.value = []
+    versionPickerMod.value = null
     server.value = null
     serverSettings.value = null
     installedMods.value = []

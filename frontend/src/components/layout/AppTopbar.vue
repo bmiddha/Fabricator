@@ -7,6 +7,7 @@ import MobileMenuButton from './MobileMenuButton.vue'
 import { contentLabel } from '../../utils/loaderKind'
 import { settingsSectionLabel } from '../../utils/settingsSections'
 import { t } from '../../i18n'
+import { useAuthStore } from '../../stores/auth'
 
 const props = defineProps({
   serverStatus: {
@@ -34,6 +35,8 @@ const props = defineProps({
 defineEmits(['start', 'stop', 'restart', 'install'])
 
 const route = useRoute()
+const auth = useAuthStore()
+const can = (permission) => auth.can(permission, route.params.id)
 
 // i18n keys, resolved in pageTitle.
 const ROUTE_TITLE = {
@@ -49,6 +52,7 @@ const ROUTE_TITLE = {
 }
 
 const pageTitle = computed(() => {
+  if (route.name === 'ServerSettings' && props.serverStatus.loader?.toLowerCase() === 'velocity') return t('velocity.title')
   // The add-on page is "Plugins" for Bukkit-family servers, "Mods" otherwise.
   if (route.name === 'ServerMods') {
     return contentLabel(props.serverStatus.loader)
@@ -106,6 +110,7 @@ const isPending = computed(() => props.serverStatus.status === 'pending')
 
       <div class="app-topbar__actions">
         <AppButton
+          v-if="can('server.restart')"
           variant="ghost"
           size="md"
           :disabled="actionState.restart || !isRunning"
@@ -116,7 +121,7 @@ const isPending = computed(() => props.serverStatus.status === 'pending')
         </AppButton>
 
         <AppButton
-          v-if="isRunning"
+          v-if="isRunning && can('server.stop')"
           variant="danger"
           size="md"
           :disabled="actionState.stop"
@@ -126,7 +131,7 @@ const isPending = computed(() => props.serverStatus.status === 'pending')
           {{ actionState.stop ? $t('topbar.stopping') : $t('topbar.stop') }}
         </AppButton>
         <AppButton
-          v-else
+          v-if="!isRunning && can(isPending ? 'server.install' : 'server.start')"
           variant="primary"
           size="md"
           :disabled="isPending ? actionState.install : (actionState.start || startLocked)"

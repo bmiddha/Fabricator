@@ -5,6 +5,7 @@ import Panel from '../../components/ui/Panel.vue'
 import ToggleRow from '../../components/ui/ToggleRow.vue'
 import JavaManagerPanel from '../../components/settings/JavaManagerPanel.vue'
 import McpPanel from '../../components/settings/McpPanel.vue'
+import DnsPanel from '../../components/settings/DnsPanel.vue'
 import ChangePasswordPanel from '../../components/settings/ChangePasswordPanel.vue'
 import PasswordTogglePanel from '../../components/settings/PasswordTogglePanel.vue'
 import { useAuthStore } from '../../stores/auth'
@@ -31,7 +32,8 @@ const hasServer = computed(() => Boolean(route.params.id))
 const sections = computed(() => availableSettingsSections({
   hasServer: hasServer.value,
   managed: auth.managed,
-  authEnabled: auth.enabled
+  authEnabled: auth.enabled,
+  can: (permission) => auth.can(permission, route.params.id)
 }))
 
 // Only honour a section that exists in this context: a hand-typed or stale URL
@@ -88,7 +90,7 @@ const displayVersion = computed(() => reportedVersion.value || appVersion)
 onMounted(async () => {
   // Managed: skip the one-shot self-update probe (gate-denied); the bundled
   // version stays the displayed fallback.
-  if (auth.managed) return
+  if (auth.managed || !auth.can('updates.read')) return
   try {
     const status = await getUpdateStatus()
     reportedVersion.value = status?.currentVersion ?? null
@@ -100,6 +102,16 @@ onMounted(async () => {
 
 <template>
   <div class="general-settings" :class="{ 'general-settings--standalone': !hasServer }">
+    <p v-if="route.query.denied" role="alert">{{ $t('access.denied') }}</p>
+    <Panel v-if="auth.user" class="general-settings__account" :title="$t('settings.sections.security')">
+      <p>{{ $t('access.identity', { subject: auth.user.sub }) }}</p>
+      <p>{{ $t('access.roles', { roles: auth.user.roles.join(', ') || '—' }) }}</p>
+      <p v-for="(grant, id) in auth.user.servers" :key="id">
+        {{ store.serversList.find(server => server.id === id)?.name || id }}:
+        {{ grant.roles.join(', ') || '—' }}
+      </p>
+      <p>{{ $t('access.managedLogin') }}</p>
+    </Panel>
     <!-- The server route gets its breadcrumb from AppTopbar; RootLayout has no
          topbar, so the server-less route carries its own. -->
     <nav v-if="!hasServer" class="general-settings__heading" :aria-label="$t('common.breadcrumb')">
@@ -236,17 +248,22 @@ onMounted(async () => {
     <JavaManagerPanel v-if="activeSection === 'java'" />
 
     <McpPanel v-if="activeSection === 'mcp'" />
+    <DnsPanel v-if="activeSection === 'dns'" :server-id="hasServer ? String(route.params.id) : ''" />
 
     <!-- Nothing to change when there is no password; the toggle panel below
          covers that state and is how one gets set again. -->
-    <ChangePasswordPanel v-if="activeSection === 'security' && auth.enabled" />
+    <ChangePasswordPanel v-if="activeSection === 'security' && auth.enabled && !auth.oidcMode" />
 
-    <PasswordTogglePanel v-if="activeSection === 'security'" />
+    <PasswordTogglePanel v-if="activeSection === 'security' && !auth.oidcMode" />
     </div>
   </div>
 </template>
 
 <style scoped>
+.general-settings__account {
+  overflow-wrap: anywhere;
+}
+
 .general-settings {
   display: flex;
   flex-direction: column;

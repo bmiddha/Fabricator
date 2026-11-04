@@ -21,6 +21,10 @@ const props = defineProps({
   loading: {
     type: Boolean,
     default: false
+  },
+  canPurge: {
+    type: Boolean,
+    default: true
   }
 })
 
@@ -49,7 +53,7 @@ const totalLabel = computed(() => formatFileSize(totalBytes.value))
 
 function onConfirm() {
   if (props.loading) return
-  emit('confirm', { purge: purge.value })
+  emit('confirm', { purge: props.canPurge && purge.value })
 }
 
 function onCancel() {
@@ -78,7 +82,7 @@ function onCancel() {
       </i18n-t>
       <p class="delete-config__description">{{ $t('backups.deleteConfig.description') }}</p>
 
-      <label class="delete-config__purge">
+      <label v-if="props.canPurge" class="delete-config__purge">
         <input
           type="checkbox"
           v-model="purge"

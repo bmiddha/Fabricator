@@ -15,6 +15,7 @@ import ServerSchedulesPage from '../views/server/ServerSchedulesPage.vue'
 import ServerPlayitPage from '../views/server/ServerPlayitPage.vue'
 import ServerSettingsPage from '../views/server/ServerSettingsPage.vue'
 import ServerGeneralSettingsPage from '../views/server/ServerGeneralSettingsPage.vue'
+import { canVisit } from '../utils/permissions'
 
 const routes = [
   { path: '/login', name: 'Login', component: LoginPage },
@@ -83,7 +84,13 @@ router.beforeEach(async (to) => {
   if (to.name === 'Login') {
     return auth.isAuthenticated ? { name: 'Servers' } : true
   }
-  if (auth.isAuthenticated) return true
+  if (auth.isAuthenticated) {
+    const id = to.params.id
+    if (id && (!auth.can('server.view', id) || !canVisit(auth, to.name, id))) {
+      return { name: 'GlobalSettings', query: { denied: '1' } }
+    }
+    return true
+  }
   return { name: 'Login', query: { redirect: to.fullPath } }
 })
 

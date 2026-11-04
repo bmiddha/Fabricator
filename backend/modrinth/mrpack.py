@@ -284,6 +284,7 @@ class StagedPack:
     size_bytes: int
     summary: Dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
+    owner: Optional[Dict[str, str]] = None
 
     def to_payload(self) -> Dict[str, Any]:
         return {
@@ -298,7 +299,7 @@ _staged: Dict[str, StagedPack] = {}
 _staged_lock = threading.Lock()
 
 
-def stage(path: Path, *, filename: str, size_bytes: int, summary: Dict[str, Any]) -> StagedPack:
+def stage(path: Path, *, filename: str, size_bytes: int, summary: Dict[str, Any], owner=None) -> StagedPack:
     """Register an already-written archive and return its handle."""
     pack = StagedPack(
         upload_id=uuid.uuid4().hex,
@@ -306,6 +307,7 @@ def stage(path: Path, *, filename: str, size_bytes: int, summary: Dict[str, Any]
         filename=filename,
         size_bytes=size_bytes,
         summary=summary,
+        owner=owner,
     )
     with _staged_lock:
         _staged[pack.upload_id] = pack

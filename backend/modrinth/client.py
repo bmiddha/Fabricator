@@ -404,7 +404,7 @@ class ModrinthClient:
     def get_project_download_url(
         self,
         project_id: str,
-        mc_version: str,
+        mc_version: Optional[str],
         loader: str = "fabric",
         loaders: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
@@ -418,7 +418,8 @@ class ModrinthClient:
         """
         loader_facets = loaders if loaders else [loader]
         versions = self.get_project_versions(
-            project_id=project_id, loaders=loader_facets, game_versions=[mc_version]
+            project_id=project_id, loaders=loader_facets,
+            game_versions=[mc_version] if mc_version else None
         )
         best_version = self.pick_best_version(versions)
         if not best_version:

@@ -58,12 +58,14 @@ const handleCreateServer = (createdServer) => {
   <router-view />
   <template v-if="!auth.managed && (auth.isAuthenticated || !auth.enabled)">
     <ServerCreateModal
+      v-if="auth.can('servers.create')"
       :show="showCreateModal"
       @close="showCreateModal = false"
       @create="handleCreateServer"
       @import="openImport"
     />
     <ImportServerModal
+      v-if="auth.can('servers.import')"
       :show="showImportModal"
       @close="showImportModal = false"
       @imported="handleImportedServer"
@@ -71,4 +73,3 @@ const handleCreateServer = (createdServer) => {
   </template>
   <ToastContainer />
 </template>
-

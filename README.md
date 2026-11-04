@@ -86,6 +86,33 @@
 
 ## Quick Start
 
+### DNS and Velocity networks
+
+Fabricator can publish public server hostnames and Minecraft SRV records through
+an ExternalDNS-compatible webhook service. The initial backends are Cloudflare
+(using libdns) and self-hosted PowerDNS Authoritative. See the opt-in
+[DNS deployment recipes](deploy/dns/README.md); the default Compose installation
+does not expose DNS or enable record management.
+
+Configure the private webhook URL and allowed domain in **Settings > DNS**, then
+enable **Settings > DNS** on each server to publish its reachable public address.
+Manual A, AAAA, CNAME, SRV, TXT, MX, CAA, and child NS records are also supported.
+Provider credentials belong in the webhook deployment, not in the dashboard.
+Saved changes reconcile automatically; preview and synchronize controls show
+pending operations and provider failures. Stopping a server does not remove DNS.
+Disabling a binding or DNS management schedules owned records for removal.
+
+Velocity proxies use the same server lifecycle controls with dedicated backend,
+fallback, forced-host, and forwarding configuration. Publish DNS to the proxy,
+not its private backends. Configuring DNS does not open ports, traverse NAT, or
+isolate backends: restrict backend access to the proxy and review forwarding
+changes before applying them.
+
+The webhook service can also be used by Kubernetes ExternalDNS. Fabricator
+itself does not create Kubernetes resources or require cluster credentials.
+Use separate ownership IDs and partition names between writers; do not let
+multiple controllers manage the same record set.
+
 ### Docker (recommended)
 
 A single multi-arch image is published to GHCR for every release. It runs as a
@@ -287,6 +314,82 @@ your servers are untouched.)
 
 When Fabricator is served behind TLS, also set `FABRICATOR_SESSION_COOKIE_SECURE=1`
 so the session cookie carries the `Secure` flag.
+
+#### OIDC, multiple users and custom roles
+
+Configure one OpenID Connect provider to replace password login and first-boot
+password setup. Register a **confidential Authorization Code client**, with PKCE
+S256 support, `openid` scope and this exact callback:
+`https://panel.example/api/auth/oidc/callback`.
+
+```dotenv
+FABRICATOR_OIDC_ISSUER=https://identity.example/realms/home
+FABRICATOR_OIDC_CLIENT_ID=fabricator
+FABRICATOR_OIDC_CLIENT_SECRET=your-client-secret
+FABRICATOR_OIDC_REDIRECT_URI=https://panel.example/api/auth/oidc/callback
+FABRICATOR_SESSION_COOKIE_SECURE=1
+FABRICATOR_OIDC_DISPLAY_NAME=Home SSO
+FABRICATOR_OIDC_USERS='{"admin-sub":{"roles":["admin"]},"user-sub":{"roles":["token-user"],"servers":{"srv_1":["operator"],"srv_2":["viewer","backup-reader"]}}}'
+FABRICATOR_AUTH_ROLES='{"backup-reader":["server.view","backups.list","backups.download"]}'
+```
+
+Use the provider's exact, case-sensitive **subject (`sub`)**, not an email,
+display name or Minecraft account. Only configured subjects can sign in. Use
+stable server IDs from the server URLs/API, not server names. Settings shows
+the current account; role/user configuration stays deployment-owned.
+
+The pre-provisioned roles are:
+
+| Role | Default permissions |
+| --- | --- |
+| `admin` | Every permission. Assign globally for full administration. |
+| `operator` | Server status, metrics and logs; start, stop and restart. |
+| `viewer` | Server status, metrics and logs only. |
+| `token-user` | Manage the signed-in user's own MCP tokens. Assign globally. |
+
+Roles are fully customizable: `FABRICATOR_AUTH_ROLES` can add arbitrary role
+names or **replace** any built-in's entire permission list. Unspecified built-ins
+retain their defaults. Multiple roles combine additively. Assign global roles
+with `roles`, or per-server roles with `servers`. Global server permissions
+cover all existing and future servers; per-server roles cover only named IDs.
+Instance-wide permissions in a per-server assignment are ignored. There are no
+wildcards, explicit denies or role inheritance, and no special privilege attached
+to the name `admin`. At least one configured user must retain every permission
+globally to prevent administrative lockout.
+
+See the [permission catalog](API_DOCS.md#oidc-permission-catalog) for individual
+file, console, mod, backup, player, schedule and host operations. Grant carefully:
+logs can expose game/chat data and secrets; console, file writes, mod installation,
+restores and launch settings can execute code on the shared host. This is panel
+authorization, not isolation between server processes.
+
+**MCP tokens** are owned by the account that creates them and are limited by
+both their read/manage scope and that account's current permissions. Grant
+`token-user` globally for self-service mint/revoke. `tokens.all.manage` permits
+listing/revoking other users' tokens, and `mcp.configure` controls the global
+switch. Ownerless pre-OIDC tokens stop working in OIDC mode: replace them
+through Settings. Tokens cannot manage tokens or the switch, even for an admin.
+
+**Deployment and recovery.** Apply environment variables using the normal
+source `.env`, Docker environment, systemd environment file or Windows executable
+configuration, then restart. The callback uses the configured external URL,
+not inferred proxy headers; forward `/api/` unchanged through your trusted TLS
+proxy. Keep client secrets out of source control. For development, HTTP is
+allowed only for loopback URLs; with Vite use
+`http://localhost:3000/api/auth/oidc/callback` and its existing API proxy.
+The same login flow is used by source, Docker and packaged Windows builds.
+
+Incomplete or invalid configuration, conflicting `FABRICATOR_DISABLE_AUTH`,
+unknown roles/permissions and administrative lockout fail startup explicitly.
+Provider outages fail login closed with a retry message, never a password
+fallback. OIDC ignores persisted password-disable flags and existing password
+hashes without deleting them. To recover, fix deployment configuration, or
+remove **all** OIDC/role variables and restart to restore the prior password
+policy; a previously disabled password makes that restored policy open, so do
+this only on a trusted network. Deleting `auth.json` does not bypass OIDC.
+Changes to users/roles apply to existing sessions and tokens after restart.
+Logout clears only Fabricator's session; provider SSO may sign the next login
+back in without prompting. OIDC does not authenticate Minecraft players.
 
 ---
 

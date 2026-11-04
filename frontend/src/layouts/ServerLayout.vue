@@ -1,6 +1,6 @@
 <script setup>
 import { onUnmounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import AppSidebar from '../components/layout/AppSidebar.vue'
 import AppTopbar from '../components/layout/AppTopbar.vue'
 import ConfirmModal from '../components/modals/ConfirmModal.vue'
@@ -14,8 +14,14 @@ import { useAuthStore } from '../stores/auth'
 import { loaderModrinthFacets } from '../utils/loaderKind'
 
 const route = useRoute()
+const router = useRouter()
 const store = useServerStore()
 const auth = useAuthStore()
+watch([() => store.server?.loader, () => route.name], ([loader, name]) => {
+  if (loader === 'velocity' && ['ServerPlayers', 'ServerBackups'].includes(name)) {
+    router.replace({ name: 'ServerOverview', params: { id: route.params.id } })
+  }
+}, { immediate: true })
 
 // ---------- Polling (owned by layout per Phase 3 architecture) ----------
 
@@ -26,7 +32,7 @@ let installProgressIntervalId = null
 
 /** Routes that show live-ish console output; keep logs polling like the console page. */
 function shouldPollLogs(routeName) {
-  return routeName === 'ServerConsole' || routeName === 'ServerOverview'
+  return auth.can('server.logs.read', route.params.id) && (routeName === 'ServerConsole' || routeName === 'ServerOverview')
 }
 
 function startLogPolling() {
@@ -115,7 +121,7 @@ watch(() => route.name, (name) => {
   }
   // Refresh on every visit to the Files tab (not just the first) so the
   // listing reflects on-disk changes. Keep the user's current folder.
-  if (name === 'ServerFiles' && !store.fileBrowser.loading) {
+  if (name === 'ServerFiles' && auth.can('files.list', route.params.id) && !store.fileBrowser.loading) {
     store.openFileBrowser(store.fileBrowser.currentPath)
   }
 }, { immediate: true })
@@ -138,6 +144,7 @@ watch(() => store.currentServerId, async (newId, oldId) => {
   stopInstallProgressPolling()
   store.resetState()
   await store.refreshAll()
+  if (newId !== store.currentServerId || !auth.can('server.view', newId)) return
   if (shouldPollLogs(route.name)) {
     await store.loadLogs()
     startLogPolling()
@@ -192,6 +199,7 @@ onUnmounted(() => {
 
     <!-- Modals (hosted at layout level so they survive route changes) -->
     <ModBrowserModal
+      v-if="auth.can('mods.install', route.params.id)"
       :show="store.showModBrowser"
       :mc-version="store.server?.version || store.serverStatus.version"
       :loader="(store.server?.loader || store.serverStatus.loader).toLowerCase()"
@@ -202,6 +210,7 @@ onUnmounted(() => {
     <!-- #56: pick which version of a mod is installed. Hosted here like the
          other modals so it survives navigation away from the Mods tab. -->
     <ModVersionModal
+      v-if="auth.can('mods.install', route.params.id)"
       :show="store.showVersionPicker"
       :project-id="store.versionPickerMod?.projectId || ''"
       :project-title="store.versionPickerMod?.title || ''"
@@ -213,6 +222,7 @@ onUnmounted(() => {
     />
 
     <ModpackBrowserModal
+      v-if="auth.can('modpacks.install', route.params.id)"
       :show="store.showModpackBrowser"
       :mc-version="store.server?.version || store.serverStatus.version"
       :loader="(store.server?.loader || store.serverStatus.loader).toLowerCase()"
@@ -304,7 +314,7 @@ onUnmounted(() => {
     />
 
     <JavaInstallModal
-      v-if="!auth.managed"
+      v-if="!auth.managed && auth.can('java.read') && auth.can('java.install')"
       :show="store.showJavaModal"
       :mc-version="store.server?.version || ''"
       :loader="store.server?.loader || ''"

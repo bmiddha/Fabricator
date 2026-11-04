@@ -16,9 +16,11 @@ import { useServerStore } from '../../stores/server'
 import { useToast } from '../../composables/useToast'
 import { formatTimestamp } from '../../utils/format'
 import { formatList, t } from '../../i18n'
+import { useCapabilities } from '../../composables/useCapabilities'
 
 const serverStore = useServerStore()
 const toast = useToast()
+const can = useCapabilities()
 
 const schedules = ref([])
 // False until the current server's list first arrives: drives the empty state,
@@ -38,7 +40,7 @@ const deleting = ref(false)
 
 async function load() {
   const serverId = serverStore.currentServerId
-  if (!serverId) return
+  if (!serverId || !can('schedules.read')) return
   try {
     const list = await listSchedules(serverId)
     // Drop a reply that lands after the user switched servers.
@@ -157,7 +159,7 @@ onUnmounted(() => clearInterval(refreshTimer))
         <h2 class="schedules-page__title">{{ $t('nav.schedules') }}</h2>
         <p class="schedules-page__sub">{{ $t('schedules.subtitle') }}</p>
       </div>
-      <AppButton variant="primary" size="md" @click="openEditor()">{{ $t('schedules.new') }}</AppButton>
+      <AppButton v-if="can('schedules.create')" variant="primary" size="md" @click="openEditor()">{{ $t('schedules.new') }}</AppButton>
     </header>
 
     <p v-if="loaded && !schedules.length" class="schedules-page__empty">{{ $t('schedules.empty') }}</p>
@@ -165,9 +167,9 @@ onUnmounted(() => clearInterval(refreshTimer))
     <Panel v-for="schedule in schedules" :key="schedule.id" :title="schedule.name">
       <template #action>
         <div class="schedules-page__actions">
-          <AppButton variant="ghost" size="sm" @click="runNow(schedule)">{{ $t('schedules.runNow') }}</AppButton>
-          <AppButton variant="ghost" size="sm" @click="openEditor(schedule)">{{ $t('schedules.edit') }}</AppButton>
-          <AppButton variant="danger" size="sm" @click="toDelete = schedule">{{ $t('common.delete') }}</AppButton>
+          <AppButton v-if="can('schedules.run')" variant="ghost" size="sm" @click="runNow(schedule)">{{ $t('schedules.runNow') }}</AppButton>
+          <AppButton v-if="can('schedules.update')" variant="ghost" size="sm" @click="openEditor(schedule)">{{ $t('schedules.edit') }}</AppButton>
+          <AppButton v-if="can('schedules.delete')" variant="danger" size="sm" @click="toDelete = schedule">{{ $t('common.delete') }}</AppButton>
         </div>
       </template>
 
@@ -204,6 +206,7 @@ onUnmounted(() => clearInterval(refreshTimer))
         </ol>
 
         <ToggleRow
+          :disabled="!can('schedules.update')"
           :model-value="schedule.enabled"
           :label="$t('schedules.fields.enabled')"
           @update:model-value="value => setEnabled(schedule, value)"
