@@ -9,7 +9,7 @@ main() {
     OS_FAMILY=""
     PACKAGETYPE=""
 
-    GITHUB_OWNER="philderks"
+    GITHUB_OWNER="bmiddha"
     GITHUB_REPO="Fabricator"
     INSTALL_DIR="/opt/fabricator"
     APP_DIR="$INSTALL_DIR/app"
@@ -18,9 +18,24 @@ main() {
     SERVICE_NAME="fabricator.service"
     DATA_DIR="/var/lib/fabricator"
 
+    SOURCE_ENV_FILE="/etc/fabricator/source.env"
+    if [[ -f "$SOURCE_ENV_FILE" ]]; then
+        while IFS='=' read -r key value; do
+            case "$key" in
+                FABRICATOR_REPO) FABRICATOR_REPO="${FABRICATOR_REPO:-$value}" ;;
+                FABRICATOR_BRANCH) FABRICATOR_BRANCH="${FABRICATOR_BRANCH:-$value}" ;;
+            esac
+        done < "$SOURCE_ENV_FILE"
+    fi
     FABRICATOR_REPO="${FABRICATOR_REPO:-${GITHUB_OWNER}/${GITHUB_REPO}}"
     FABRICATOR_BRANCH="${FABRICATOR_BRANCH:-main}"
     FABRICATOR_VERSION="${FABRICATOR_VERSION:-latest}"  # latest | main | v1.2.3
+    if [[ ! "$FABRICATOR_REPO" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+        error "FABRICATOR_REPO must be a GitHub owner/repository"
+    fi
+    if [[ ! "$FABRICATOR_BRANCH" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ || "$FABRICATOR_BRANCH" == *..* ]]; then
+        error "FABRICATOR_BRANCH must be a Git branch name without '..'"
+    fi
 
     # playit.gg tunnel agent — pinned to a known-verified release.
     # Bumping this constant requires refreshing every sha256 in PLAYIT_SHA256
@@ -366,7 +381,7 @@ for release in releases:
       if [[ "$FABRICATOR_VERSION" == "latest" ]]; then
         TAG="$(get_latest_tag || true)"
         if [[ -z "$TAG" ]]; then
-          error "No Fabricator release was found. Re-run with: FABRICATOR_VERSION=vX.Y.Z"
+          error "No panel release was found in ${FABRICATOR_REPO}. Publish a fork release, specify FABRICATOR_VERSION=vX.Y.Z, or build main and use FABRICATOR_LOCAL_SRC."
         fi
         info "Latest release: $TAG"
       elif [[ "$FABRICATOR_VERSION" == "main" ]]; then
@@ -471,6 +486,14 @@ for release in releases:
     # Config
     info "Creating config directory /etc/fabricator..."
     $SUDO mkdir -p /etc/fabricator
+    $SUDO chown root:root /etc/fabricator
+    $SUDO chmod 0755 /etc/fabricator
+    $SUDO tee "$SOURCE_ENV_FILE" >/dev/null <<EOF
+FABRICATOR_REPO=${FABRICATOR_REPO}
+FABRICATOR_BRANCH=${FABRICATOR_BRANCH}
+EOF
+    $SUDO chown root:root "$SOURCE_ENV_FILE"
+    $SUDO chmod 0644 "$SOURCE_ENV_FILE"
 
     if [ ! -f "$ENV_FILE" ]; then
         info "Creating default env file at $ENV_FILE"
@@ -533,6 +556,7 @@ Group=$SERVICE_USER
 UMask=0002
 WorkingDirectory=$APP_DIR
 EnvironmentFile=/etc/fabricator/fabricator.env
+EnvironmentFile=${SOURCE_ENV_FILE}
 ExecStart=$VENV_DIR/bin/python $APP_DIR/run.py
 Restart=on-failure
 RestartSec=5
@@ -583,6 +607,7 @@ TimeoutStartSec=infinity
 # The panel can only write the request file's *contents*; update.sh validates
 # them against a strict allowlist before trusting the version string.
 Environment=FABRICATOR_UPDATE_REQUEST_FILE=${UPDATE_REQUEST_FILE}
+EnvironmentFile=${SOURCE_ENV_FILE}
 # Start each run clean: truncate the log and drop any stale result. We truncate
 # here, NOT via StandardOutput=truncate:, because truncate: re-truncates the
 # file on every Exec* open — including ExecStopPost, which runs last and would

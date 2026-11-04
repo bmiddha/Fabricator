@@ -4,14 +4,21 @@
 
 # Fabricator
 
+> **Experimental fork:** Independently maintained fork of [philderks/Fabricator](https://github.com/philderks/Fabricator). `main` is the active development branch; features may be incomplete or change without notice.
+
+## Experimental features
+
+- **OIDC login** — authentication through an OpenID Connect provider.
+- **DNS management** — manage DNS records for Minecraft servers.
+
 **Self-hosted web dashboard for managing Minecraft servers.**
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/philderks/Fabricator?style=flat-square)](https://github.com/philderks/Fabricator/stargazers)
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20Docker-lightgrey?style=flat-square)](https://github.com/philderks/Fabricator)
-[![Docker](https://img.shields.io/badge/ghcr.io-philderks%2Ffabricator-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/philderks/Fabricator/pkgs/container/fabricator)
+[![Stars](https://img.shields.io/github/stars/bmiddha/Fabricator?style=flat-square)](https://github.com/bmiddha/Fabricator/stargazers)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20Docker-lightgrey?style=flat-square)](https://github.com/bmiddha/Fabricator)
+[![Docker](https://img.shields.io/badge/ghcr.io-bmiddha%2Ffabricator-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/bmiddha/Fabricator/pkgs/container/fabricator)
 
-[Website](https://fabricator.site/) | [Documentation](https://docs.fabricator.site/) | [MCP server for AI clients](mcp/README.md)
+[Documentation](API_DOCS.md) | [Fork issues](https://github.com/bmiddha/Fabricator/issues) | [MCP server for AI clients](mcp/README.md)
 
 </div>
 
@@ -51,7 +58,7 @@
 | ⌨️ | **CLI**: expanded server and mod management commands | 📋 Planned |
 | 🔄 | **Upgrades for modded loaders** (Fabric, Quilt, NeoForge, Forge) | 📋 Planned |
 | 📊 | **Metrics tab**: CPU, RAM, and usage over time | 📋 Planned |
-| 🔐 | **User roles and permissions** | 📋 Planned |
+| 🔐 | **OIDC user roles and permissions** | 🧪 Experimental |
 | ✏️ | **Advanced editor & archived logs** | 📋 Planned |
 | 📥 | **More install targets**: Proxmox VE, CasaOS, Umbrel, Unraid, Coolify/Dokploy | 📋 Planned |
 
@@ -115,12 +122,22 @@ multiple controllers manage the same record set.
 
 ### Docker (recommended)
 
-A single multi-arch image is published to GHCR for every release. It runs as a
+A single multi-arch fork image is built by the release workflow. It runs as a
 non-root user and keeps all state on one `/data` volume.
+Published images require a successful fork release and package access; no
+upstream image is used as a fallback. To run unreleased `main`, clone this fork
+and build locally first:
+
+```bash
+git clone https://github.com/bmiddha/Fabricator.git
+cd Fabricator
+docker build -t ghcr.io/bmiddha/fabricator:latest .
+docker compose up -d --pull never
+```
 
 ```bash
 # Grab the compose file and start
-curl -fsSL https://raw.githubusercontent.com/philderks/Fabricator/main/docker-compose.yml -o docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/bmiddha/Fabricator/main/docker-compose.yml -o docker-compose.yml
 docker compose up -d
 ```
 
@@ -141,7 +158,7 @@ Docker Desktop / WSL2).
 
 ### Windows (portable .exe)
 
-Every [release](https://github.com/philderks/Fabricator/releases) includes a portable
+The fork's [panel release workflow](https://github.com/bmiddha/Fabricator/releases) builds a portable
 `Fabricator-<version>.exe`. Download it and run it — no install needed. It opens the
 panel in your browser at `http://127.0.0.1:5000` and adds a tray icon with **Open in
 Browser**, **Open Data Folder**, and **Quit**. The panel listens on loopback only.
@@ -152,18 +169,31 @@ and verifies its checksum.
 
 ### One-line installer
 
-The script downloads a **release tarball** from [GitHub Releases](https://github.com/philderks/Fabricator/releases), installs dependencies, creates a `fabricator` user and systemd unit, and starts the app. Supported distros: Debian/Ubuntu (and derivatives), Arch, Fedora/RHEL family. **systemd** and **curl** are required.
+The script downloads a **release tarball** from the fork's [GitHub Releases](https://github.com/bmiddha/Fabricator/releases), installs dependencies, creates a `fabricator` user and systemd unit, and starts the app. Supported distros: Debian/Ubuntu (and derivatives), Arch, Fedora/RHEL family. **systemd** and **curl** are required. A fork panel release must exist first; missing releases fail explicitly rather than installing upstream.
 
 ```bash
-curl -fsSL https://fabricator.site/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/bmiddha/Fabricator/main/tools/install.sh | bash
 ```
 
-By default this installs the **latest** published release.
+By default this installs the **latest** published fork panel release, not the
+current `main` checkout. `main` is the active development branch. Before the
+first fork release, use manual installation below, or build `frontend/dist`
+in a local clone and run `sudo FABRICATOR_LOCAL_SRC="$PWD" bash tools/install.sh`.
+Local-source deployment still installs a system service; dashboard/CLI updates
+subsequently target published fork releases, not automatic Git pulls.
+
+The installer records its repository and script branch in root-owned
+`/etc/fabricator/source.env`, used by the panel, CLI, and privileged updater.
+`FABRICATOR_REPO` and `FABRICATOR_BRANCH` can select another explicit source
+when running the installer; both are validated and persisted. To migrate an
+existing upstream native install, explicitly run this fork's installer with
+`FABRICATOR_REPO=bmiddha/Fabricator`. Server data and authentication settings
+are preserved. No update path silently switches back to upstream.
 
 **Updating.** The easiest way is from the panel itself: Fabricator checks GitHub Releases and you can update from the sidebar. You can also re-run the installer, which detects an existing install and updates in place (backing up `servers.json` and `fabricator.env`, keeping your data under `/var/lib/fabricator`):
 
 ```bash
-curl -fsSL https://fabricator.site/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/bmiddha/Fabricator/main/tools/install.sh | FABRICATOR_REPO=bmiddha/Fabricator bash
 ```
 
 Or update from the CLI:
@@ -181,7 +211,7 @@ For local development, the app defaults to loopback-only; see `.env.example`.
 
 ```bash
 # Clone
-git clone https://github.com/philderks/Fabricator.git
+git clone https://github.com/bmiddha/Fabricator.git
 cd Fabricator
 
 # Backend
@@ -202,6 +232,26 @@ python3 run.py
 Environment variables are documented in `.env.example`. For production-like paths, set `FLASK_ENV=production`, `SERVER_ROOT`, and `SERVER_INDEX_FILE` (see Configuration).
 
 </details>
+
+### Fork publishing prerequisites
+
+Enable Actions in this fork and allow its release workflow to write releases
+and GHCR packages. Publish a panel `v*` release to build Linux tarballs,
+Windows executables, and `ghcr.io/bmiddha/fabricator` images. Make the package
+public or authenticate Docker pulls as appropriate. These repository/account
+settings and the first release are manual actions, not performed by this change.
+CI runs against `main`; merging does not itself publish a release or image.
+Enable private vulnerability reporting before relying on the fork's security
+reporting link.
+
+MCP client configuration installs directly from this fork's `main`, not the
+upstream PyPI package. The inherited MCP registry descriptor and package name
+remain upstream-owned metadata; the publishing job is disabled for this fork.
+Publishing a separate package would require registered fork-owned identities
+and credentials first. Website deployment is also off by default; enable
+`WEBSITE_DEPLOY_ENABLED=true` only with your own
+`CLOUDFLARE_PAGES_DEPLOY_HOOK_URL` repository secret. No upstream website is
+required to install or run the fork.
 
 ---
 

@@ -18,8 +18,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://fabricator.site/"
-Repository = "https://github.com/philderks/Fabricator"
+Homepage = "https://github.com/bmiddha/Fabricator"
+Repository = "https://github.com/bmiddha/Fabricator"
 
 [project.scripts]
 fabricator-panel-mcp = "fabricator_mcp.__main__:main"

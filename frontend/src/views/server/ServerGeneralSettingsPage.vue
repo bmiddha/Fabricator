@@ -55,10 +55,10 @@ const indexTo = computed(() => (hasServer.value
 
 const activeSectionLabel = computed(() => settingsSectionLabel(activeSection.value))
 
-const DOCS_URL = 'https://docs.fabricator.site'
+const DOCS_URL = 'https://github.com/bmiddha/Fabricator/blob/main/API_DOCS.md'
 // The tracker itself, not a prefilled new issue: it lands on existing reports
 // first, so a duplicate can be found before it is filed.
-const ISSUES_URL = 'https://github.com/philderks/Fabricator/issues'
+const ISSUES_URL = 'https://github.com/bmiddha/Fabricator/issues'
 
 // Boot auto-start mode — saves instantly via its own endpoint, so it stays
 // editable even while the server is running (unlike server.properties).

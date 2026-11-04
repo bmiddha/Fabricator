@@ -1,10 +1,8 @@
-<!-- mcp-name: io.github.philderks/fabricator-panel-mcp -->
-
 # fabricator-panel-mcp
 
 > **Beta.** Young, and the way the client is configured may change between releases.
 
-An MCP server for the [Fabricator](https://github.com/philderks/Fabricator) Minecraft panel. It
+An MCP server for the [Fabricator fork](https://github.com/bmiddha/Fabricator) Minecraft panel. It
 runs on **your** machine, next to your MCP client, and talks to your panel over its HTTP API using
 an API token you mint in the panel's **Settings**, under *Model Context Protocol*.
 
@@ -25,7 +23,7 @@ Paste this into your MCP client configuration. Create the token in Fabricator's 
   "mcpServers": {
     "fabricator": {
       "command": "uvx",
-      "args": ["fabricator-panel-mcp"],
+      "args": ["--from", "git+https://github.com/bmiddha/Fabricator@main#subdirectory=mcp", "fabricator-panel-mcp"],
       "env": {
         "FABRICATOR_URL": "http://YOUR-PANEL:5000",
         "FABRICATOR_TOKEN": "YOUR_API_TOKEN"
@@ -34,6 +32,12 @@ Paste this into your MCP client configuration. Create the token in Fabricator's 
   }
 }
 ```
+
+This installs the fork's active development branch, not the upstream PyPI
+package. Pin a commit instead of `main` when you need reproducible client
+deployments. The inherited registry descriptor is not published by this fork;
+its package/registry identity remains upstream-owned until separate identities
+are registered and publishing is deliberately configured.
 
 ## Requirements
 

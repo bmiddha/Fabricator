@@ -1559,7 +1559,7 @@ FABRICATOR_MANAGED=1             # managed-hosting mode: lock deployment-owned c
 FABRICATOR_MANAGED_MEMORY_GB=... # managed mode: pinned per-server JVM heap in whole GB; required when managed
 
 # Self-updater
-FABRICATOR_REPO=philderks/Fabricator
+FABRICATOR_REPO=bmiddha/Fabricator
 FABRICATOR_UPDATE_MODE=...
 FABRICATOR_UPDATE_DIR=/var/lib/fabricator/update
 
@@ -1785,7 +1785,7 @@ commercially. The CLA Assistant bot records your acceptance once per GitHub acco
 
 ## Support
 
-- GitHub Issues: [Fabricator Issues](https://github.com/philderks/Fabricator/issues)
+- GitHub Issues: [Fabricator fork issues](https://github.com/bmiddha/Fabricator/issues)
 - Modrinth API docs: [docs.modrinth.com](https://docs.modrinth.com)
 
 ## MCP integration (API tokens)
@@ -1906,8 +1906,8 @@ token filled in):
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/philderks/Fabricator@dev#subdirectory=mcp",
-        "fabricator-mcp"
+        "git+https://github.com/bmiddha/Fabricator@main#subdirectory=mcp",
+        "fabricator-panel-mcp"
       ],
       "env": {
         "FABRICATOR_URL": "http://127.0.0.1:5000",
@@ -1918,8 +1918,8 @@ token filled in):
 }
 ```
 
-The package is installed from the repository because it is not on PyPI yet; when it is, `command`
-and `args` become `"uvx"` and `["fabricator-mcp"]` and nothing else changes.
+The package installs directly from the fork's active development branch. It does
+not use the upstream PyPI package; pin a commit instead of `main` for reproducibility.
 
 The token goes in `env`, never in `args` — a command line is readable by every process on the
 machine and is written to shell history.

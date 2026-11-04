@@ -39,8 +39,8 @@ jobs:
       - name: Run the suite
         run: uv run pytest -q
 
-  # A warning, not a gate. Users do not install our lockfile: `uvx fabricator-panel-mcp`
-  # resolves the published dependency ranges fresh every time, so the closure a
+  # A warning, not a gate. Source installs do not use our lockfile: uvx
+  # resolves the dependency ranges fresh every time, so the closure a
   # user gets is the one this job tests, not the one above. Without it the first
   # report of an SDK regression would come from a user. It is allowed to fail:
   # a broken upstream release must be visible without blocking a release that is

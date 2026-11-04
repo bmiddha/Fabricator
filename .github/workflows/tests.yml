@@ -5,7 +5,7 @@ name: Tests
 on:
   pull_request:
   push:
-    branches: [dev]
+    branches: [main]
 
 jobs:
   pytest:
@@ -48,4 +48,6 @@ jobs:
       - run: npm ci
         working-directory: frontend
       - run: npm run build
+        working-directory: frontend
+      - run: node --test src/utils/permissions.test.js src/config/mcpClientConfig.test.js
         working-directory: frontend

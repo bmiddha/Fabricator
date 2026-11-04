@@ -30,9 +30,12 @@ jobs:
         run: uv run pytest -q
 
   publish:
+    # The package/registry identities below belong to upstream. Fork installs
+    # use source from main; publishing needs separately registered identities.
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      startsWith(github.event.release.tag_name, 'mcp-v')
+      github.repository == 'philderks/Fabricator' &&
+      (github.event_name == 'workflow_dispatch' ||
+      startsWith(github.event.release.tag_name, 'mcp-v'))
     needs: test
     runs-on: ubuntu-latest
     environment: pypi

@@ -29,7 +29,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ ./backend/
 COPY run.py pyproject.toml ./
-# tools/ (host installer + Windows spec-gen) is intentionally not copied.
+# Only the shared release-source helper is needed, not the host installer.
+COPY tools/__init__.py tools/distribution.py ./tools/
 
 # playit.gg tunnel agent. install.sh installs these on native hosts, but it is
 # not in the image (see above), which is why the tunnel could never start in

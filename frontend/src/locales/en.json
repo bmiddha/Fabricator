@@ -545,7 +545,7 @@
     "sectionsLabel": "Settings sections",
     "help": "Help",
     "docs": "Documentation",
-    "docsDescription": "Guides and reference at docs.fabricator.site.",
+    "docsDescription": "Guides and API reference for this fork.",
     "issues": "Report a bug or request a feature",
     "issuesDescription": "Opens the issue tracker on GitHub.",
     "about": "About",

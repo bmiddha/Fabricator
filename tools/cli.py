@@ -1,11 +1,13 @@
 """Fabricator CLI — system-level commands for managing the Fabricator service."""
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 import click
 import requests
+from tools.distribution import SOURCE_FILE, release_source
 
 INSTALL_DIR = "/opt/fabricator"
 APP_DIR = f"{INSTALL_DIR}/app"
@@ -17,7 +19,6 @@ DATA_DIR = "/var/lib/fabricator"
 CONFIG_DIR = "/etc/fabricator"
 SERVICE_USER = "fabricator"
 API_BASE = "http://localhost:5000"
-GITHUB_API = "https://api.github.com/repos/philderks/Fabricator/releases?per_page=100"
 
 
 def _systemctl(action: str) -> int:
@@ -40,8 +41,9 @@ def _get_local_version() -> str | None:
 
 
 def _get_latest_release_tag() -> str | None:
+    repo, _ = release_source(source_file=SOURCE_FILE)
     try:
-        resp = requests.get(GITHUB_API, timeout=15)
+        resp = requests.get(f"https://api.github.com/repos/{repo}/releases?per_page=100", timeout=15)
         resp.raise_for_status()
         releases = resp.json()
         if not isinstance(releases, list):
@@ -115,9 +117,11 @@ def update():
 
     click.echo(f"Updating from {local_version or 'unknown'} to {latest_tag}...")
 
+    repo, branch = release_source(source_file=SOURCE_FILE)
     result = subprocess.run(
         ["bash", INSTALL_SCRIPT, "--update"],
-        env={**__import__("os").environ, "FABRICATOR_VERSION": latest_tag},
+        env={**os.environ, "FABRICATOR_VERSION": latest_tag,
+             "FABRICATOR_REPO": repo, "FABRICATOR_BRANCH": branch},
     )
 
     if result.returncode == 0:

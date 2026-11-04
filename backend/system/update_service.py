@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shlex
 import subprocess
 import sys
 import threading
@@ -33,10 +34,11 @@ from typing import Any, Callable, Dict, Optional
 from pathlib import Path
 from urllib import error, request
 import json
+from tools.distribution import installer_url, release_source
 
 
 _TAG_CACHE_TTL = 15 * 60  # seconds
-_tag_cache: Dict[str, Any] = {"tag": None, "fetched_at": 0.0}
+_tag_cache: Dict[str, Any] = {"repo": None, "tag": None, "fetched_at": 0.0}
 _tag_cache_lock = threading.Lock()
 
 # A pinned version is only ever a release tag or the literal "latest". Anything
@@ -65,7 +67,7 @@ _EXE_SWAP_SCRIPT = (
 
 def _fetch_latest_tag(repo: str) -> Optional[str]:
     with _tag_cache_lock:
-        if time.time() - _tag_cache["fetched_at"] < _TAG_CACHE_TTL:
+        if _tag_cache["repo"] == repo and time.time() - _tag_cache["fetched_at"] < _TAG_CACHE_TTL:
             return _tag_cache["tag"]
 
     # Same filter as install.sh's get_latest_tag: GitHub's /releases/latest can
@@ -86,6 +88,7 @@ def _fetch_latest_tag(repo: str) -> Optional[str]:
         pass
 
     with _tag_cache_lock:
+        _tag_cache["repo"] = repo
         _tag_cache["tag"] = tag
         _tag_cache["fetched_at"] = time.time()
 
@@ -135,7 +138,7 @@ class UpdateService:
 
     def __init__(self) -> None:
         self._state_lock = threading.Lock()
-        self._repo = os.environ.get("FABRICATOR_REPO", "philderks/Fabricator")
+        self._repo, self._branch = release_source()
 
         self._mode = os.environ.get("FABRICATOR_UPDATE_MODE", "").strip().lower()
         if not self._mode and getattr(sys, "frozen", False) and sys.platform == "win32":
@@ -200,7 +203,7 @@ class UpdateService:
             "currentVersion": current_version,
             "latestVersion": latest,
             "updateAvailable": bool(latest and latest != current_version),
-            "updaterScript": "https://raw.githubusercontent.com/philderks/Fabricator/main/tools/install.sh",
+            "updaterScript": installer_url(self._repo, self._branch),
             **state,
         }
 
@@ -300,13 +303,15 @@ class UpdateService:
 
     def _run_update_dev(self, version: str) -> None:
         curl_updater = (
-            "curl -fsSL "
-            "'https://raw.githubusercontent.com/philderks/Fabricator/main/tools/install.sh' "
+            "set -o pipefail; curl -fsSL "
+            f"{shlex.quote(installer_url(self._repo, self._branch))} "
             "| bash -s -- --update"
         )
         cmd = ["/usr/bin/env", "bash", "-lc", curl_updater]
         env = os.environ.copy()
         env["FABRICATOR_VERSION"] = version
+        env["FABRICATOR_REPO"] = self._repo
+        env["FABRICATOR_BRANCH"] = self._branch
 
         try:
             completed = subprocess.run(  # noqa: S603
