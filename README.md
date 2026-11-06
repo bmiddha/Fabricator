@@ -1,8 +1,4 @@
-<div align="center">
-
-<img src="frontend/public/favicon.svg" alt="Fabricator Logo" width="92" height="92" />
-
-# Fabricator
+# Fabricator - Forked
 
 > **Experimental fork:** Independently maintained fork of [philderks/Fabricator](https://github.com/philderks/Fabricator). `main` is the active development branch; features may be incomplete or change without notice.
 
@@ -12,6 +8,13 @@
 - **DNS management** — manage DNS records for Minecraft servers.
 - **S3 backups** — [S3-compatible destinations](deploy/backups/README.md) for saved backup configurations.
 - **Client modpack exports** — [persistent client-only selections and authenticated `.mrpack` downloads](deploy/client-packs/README.md), combined with exact installed server mod versions.
+
+
+<div align="center">
+
+<img src="frontend/public/favicon.svg" alt="Fabricator Logo" width="92" height="92" />
+
+# Fabricator
 
 **Self-hosted web dashboard for managing Minecraft servers.**
 
