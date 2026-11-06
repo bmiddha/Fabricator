@@ -42,7 +42,7 @@ watch(
   }
 )
 
-const fileCount = computed(() => props.configSnapshots.length)
+const fileCount = computed(() => props.configSnapshots.filter(snap => snap.filePath || snap.objectKey).length)
 const totalBytes = computed(() =>
   props.configSnapshots.reduce(
     (acc, snap) => acc + (typeof snap.sizeBytes === 'number' ? snap.sizeBytes : 0),

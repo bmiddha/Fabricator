@@ -162,7 +162,26 @@ function onClose() {
                 </template>
               </FormField>
 
-              <FormField :label="$t('common.storagePathOptional')" :hint="$t('common.storagePathHint')">
+              <FormField :label="$t('backups.config.destination')">
+                <template #default="{ id }">
+                  <select :id="id" v-model="draft.destination.type">
+                    <option value="local">{{ $t('backups.config.local') }}</option>
+                    <option value="s3">{{ $t('backups.config.s3') }}</option>
+                  </select>
+                </template>
+              </FormField>
+
+              <template v-if="draft.destination.type === 's3'">
+                <p class="manage-panel__destination-hint">{{ $t('backups.config.s3Hint') }}</p>
+                <div class="manage-panel__form-row">
+                  <FormField v-for="key in ['profile', 'bucket', 'prefix', 'region', 'endpointUrl']" :key="key" :label="$t(`backups.config.s3Fields.${key}`)">
+                    <template #default="{ id }">
+                      <input :id="id" v-model="draft.destination[key]" type="text" :required="key === 'bucket' || key === 'profile'" autocomplete="off" />
+                    </template>
+                  </FormField>
+                </div>
+              </template>
+              <FormField v-else :label="$t('common.storagePathOptional')" :hint="$t('common.storagePathHint')">
                 <template #default="{ id, describedBy }">
                   <input
                     :id="id"
@@ -271,6 +290,12 @@ function onClose() {
 </template>
 
 <style scoped>
+.manage-panel__destination-hint {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
 .manage-panel__overlay {
   position: fixed;
   inset: 0;

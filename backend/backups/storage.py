@@ -177,6 +177,9 @@ def get_config_record(server_id: str, config_id: str) -> Optional[Dict[str, Any]
 def _normalise_config_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     """Coerce/default the user-provided config fields without inventing data."""
     out: Dict[str, Any] = {}
+    if "destination" in data:
+        from backend.backups.destinations import normalise
+        out["destination"] = normalise(data["destination"])
     if "name" in data:
         out["name"] = str(data.get("name") or "Backup")
     if "storagePath" in data:
@@ -220,6 +223,7 @@ def create_config(server_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
         "serverId": server_id,
         "name": "Backup",
         "storagePath": "",
+        "destination": {"type": "local"},
         "maxSnapshots": 0,
         "flush": True,
         "shutdown": False,
@@ -261,9 +265,12 @@ def update_config(
 
 
 def delete_config(
-    server_id: str, config_id: str
+    server_id: str, config_id: str, *, keep_snapshots: bool = False
 ) -> Optional[Tuple[Dict[str, Any], List[Dict[str, Any]]]]:
     """Remove the config and any associated snapshot records.
+
+    ``keep_snapshots=True`` retains records for archives left accessible after
+    a route-level config deletion, including remote archives and failed purges.
 
     Returns ``(config, snapshots)`` for the removed records, or ``None`` if
     the config did not exist. The caller decides whether to unlink the
@@ -288,6 +295,8 @@ def delete_config(
         for snap in doc["snapshots"]:
             if snap.get("configId") == config_id:
                 removed_snapshots.append(dict(snap))
+                if keep_snapshots:
+                    kept_snapshots.append(snap)
             else:
                 kept_snapshots.append(snap)
 
@@ -354,6 +363,8 @@ def record_snapshot(server_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
         "sourceSnapshotId": data.get("sourceSnapshotId"),
         "safetySnapshotId": data.get("safetySnapshotId"),
         "mode": data.get("mode"),
+        **{key: data[key] for key in ("destination", "objectKey", "sha256")
+           if key in data},
     }
     with _get_server_lock(server_id):
         doc = _read_file(server_id)
@@ -465,7 +476,10 @@ def resolve_config_storage_path(cfg: Dict[str, Any]) -> Path:
     """Return the resolved storage ``Path`` for a backup config.
 
     Empty or missing ``storagePath`` → ``<install_path>/backups``.
+    S3 configs use ``<BACKUPS_DIR>/transfer/<config-id>`` for temporary staging.
     """
+    if (cfg.get("destination") or {}).get("type") == "s3":
+        return _resolve_backups_dir() / "transfer" / str(cfg["id"])
     raw = (cfg.get("storagePath") or "").strip()
     if raw:
         return Path(raw).expanduser().resolve()

@@ -106,6 +106,11 @@ function downloadHref(snap, format = 'tar') {
           </td>
           <td class="snapshots-table__td-name">
             <div class="snapshots-table__name">{{ snap.fileName || snap.id }}</div>
+            <div v-if="snap.filePath || snap.objectKey" class="snapshots-table__msg">
+              {{ snap.destination?.type === 's3' ? $t('backups.config.s3') : $t('backups.config.local') }}
+              &middot; {{ $t(`backups.availability.${snap.availability || 'unchecked'}`) }}
+            </div>
+            <div v-if="snap.availabilityError" class="snapshots-table__msg" role="status">{{ snap.availabilityError }}</div>
             <div v-if="snap.message" class="snapshots-table__msg" :title="snap.message">{{ snap.message }}</div>
           </td>
           <td class="snapshots-table__td-config">{{ configName(snap.configId) }}</td>
@@ -120,10 +125,10 @@ function downloadHref(snap, format = 'tar') {
           <td class="snapshots-table__td-actions">
             <div class="snapshots-table__actions">
               <button
-                v-if="can('backups.restore')"
+                v-if="can('backups.restore') && (snap.filePath || snap.objectKey)"
                 type="button"
                 class="snapshots-table__action"
-                :disabled="props.busySnapshotId === snap.id"
+                :disabled="props.busySnapshotId === snap.id || snap.availability === 'unavailable'"
                 :title="$t('backups.table.restore')"
                 @click="emit('restore', snap)"
               >
@@ -134,7 +139,7 @@ function downloadHref(snap, format = 'tar') {
                 <span>{{ $t('backups.table.restore') }}</span>
               </button>
               <a
-                v-if="can('backups.download')"
+                v-if="can('backups.download') && (snap.filePath || snap.objectKey) && snap.availability !== 'unavailable'"
                 class="snapshots-table__action"
                 :href="downloadHref(snap, 'tar')"
                 :title="$t('backups.table.download', { name: snap.fileName || snap.id })"
@@ -147,7 +152,7 @@ function downloadHref(snap, format = 'tar') {
                 <span>.tar</span>
               </a>
               <a
-                v-if="can('backups.download')"
+                v-if="can('backups.download') && (snap.filePath || snap.objectKey) && snap.availability !== 'unavailable'"
                 class="snapshots-table__action snapshots-table__action--secondary"
                 :href="downloadHref(snap, 'zip')"
                 :title="$t('backups.table.downloadZip')"

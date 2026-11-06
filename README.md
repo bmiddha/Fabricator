@@ -10,6 +10,7 @@
 
 - **OIDC login** — authentication through an OpenID Connect provider.
 - **DNS management** — manage DNS records for Minecraft servers.
+- **S3 backups** — [S3-compatible destinations](deploy/backups/README.md) for saved backup configurations.
 
 **Self-hosted web dashboard for managing Minecraft servers.**
 

@@ -41,7 +41,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from backend.backups import archive, progress, storage
+from backend.backups import archive, destinations, progress, storage
 from backend.server import storage as server_storage
 from backend.server.locks import get_server_lock
 from backend.server.registry import get_server_process_registry
@@ -77,6 +77,7 @@ def run_restore_async(snapshot_id: str, *, mode: str) -> str:
         kind="restore",
         snapshot_id=snapshot_id,
         mode=mode,
+        server_id=server_id,
     )
 
     def _runner() -> None:
@@ -99,6 +100,30 @@ def run_restore(
     *,
     mode: str,
     job_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Fetch and verify remote bytes before stopping or mutating the server."""
+    if mode not in VALID_MODES:
+        raise ValueError(f"Invalid restore mode {mode!r}")
+    job_id = job_id or progress.generate_job_id("bjr")
+    server_id = storage.lookup_server_for_snapshot(snapshot_id)
+    snapshot = storage.get_snapshot(server_id, snapshot_id) if server_id else None
+    if not snapshot:
+        raise ValueError(f"Snapshot {snapshot_id!r} not found")
+    progress.update(job_id, kind="restore", server_id=server_id, snapshot_id=snapshot_id)
+    try:
+        with destinations.materialise(snapshot, job_id) as path:
+            return _run_restore_local(snapshot_id, mode=mode, job_id=job_id, local_path=path)
+    except Exception as exc:
+        progress.update(job_id, phase="failed", error=str(exc))
+        raise
+
+
+def _run_restore_local(
+    snapshot_id: str,
+    *,
+    mode: str,
+    job_id: Optional[str] = None,
+    local_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Run the full restore sequence synchronously.
 
@@ -129,7 +154,7 @@ def run_restore(
         progress.update(job_id, phase="failed", error="Snapshot not found")
         raise ValueError(f"Snapshot {snapshot_id!r} not found")
 
-    archive_path_raw = snapshot.get("filePath")
+    archive_path_raw = local_path or snapshot.get("filePath")
     if not archive_path_raw:
         progress.update(job_id, phase="failed", error="Snapshot has no file")
         raise ValueError(f"Snapshot {snapshot_id!r} has no associated file")
@@ -157,7 +182,7 @@ def run_restore(
 
     registry = get_server_process_registry()
     install_path = registry.resolve_install_path(server)
-    if cfg:
+    if cfg and (cfg.get("destination") or {}).get("type") != "s3":
         safety_storage = storage.resolve_config_storage_path(cfg)
     else:
         safety_storage = install_path / "backups"
@@ -240,6 +265,7 @@ def run_restore(
                 _overlay_copy(staging_root, install_path)
             else:
                 progress.update(job_id, phase="swapping")
+                _preserve_local_archives(install_path, staging_root, server_id)
                 _atomic_swap(install_path, staging_root, server_id)
         finally:
             if staging_root.exists():
@@ -432,6 +458,28 @@ def _overlay_copy(src: Path, dst: Path) -> None:
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(entry, target)
+
+
+def _preserve_local_archives(install_path: Path, staging: Path, server_id: str) -> None:
+    """Keep recorded archives inside the live tree, especially the new safety tar."""
+    for snapshot in storage.list_snapshots(server_id):
+        raw = snapshot.get("filePath")
+        if not raw:
+            continue
+        source = Path(raw)
+        try:
+            relative = source.resolve().relative_to(install_path.resolve())
+        except ValueError:
+            continue
+        if not source.is_file():
+            continue
+        target = staging / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.unlink(missing_ok=True)
+        try:
+            os.link(source, target)
+        except OSError:
+            shutil.copy2(source, target)
 
 
 def _atomic_swap(install_path: Path, staging: Path, server_id: str) -> None:

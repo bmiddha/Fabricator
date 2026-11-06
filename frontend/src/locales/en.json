@@ -1023,6 +1023,17 @@
       "durationMinutesSeconds": "{m}m {s}s"
     },
     "config": {
+      "destination": "Destination",
+      "local": "Local disk",
+      "s3": "S3-compatible storage",
+      "s3Hint": "One remote destination, no local mirror. Temporary local disk is required. Ask your operator for an approved backend profile and endpoint. Never enter access keys here.",
+      "s3Fields": {
+        "profile": "Backend profile",
+        "bucket": "Bucket",
+        "prefix": "Object prefix (optional)",
+        "region": "Region (optional; uses profile default)",
+        "endpointUrl": "Approved endpoint URL (optional; uses profile default)"
+      },
       "editTitle": "Edit schedule",
       "newTitle": "New schedule",
       "timeOfDayHint": "Anchor for daily runs and start time for intervals.",
@@ -1059,8 +1070,8 @@
       "updated": "Backup config updated",
       "created": "Backup config created",
       "saveFailed": "Failed to save backup config",
-      "filesKept": "{n} archive file kept on disk for \"{name}\". | {n} archive files kept on disk for \"{name}\".",
-      "deletedWithFiles": "Config deleted. Removed {n} archive file on disk. | Config deleted. Removed {n} archive files on disk.",
+      "filesKept": "{n} archive retained for \"{name}\". | {n} archives retained for \"{name}\".",
+      "deletedWithFiles": "Config deleted. Removed {n} archive. | Config deleted. Removed {n} archives.",
       "deleted": "Backup config deleted",
       "deleteFailed": "Failed to delete backup config",
       "loadFailed": "Failed to load backup configs"
@@ -1069,10 +1080,10 @@
       "title": "Delete backup config",
       "message": "Delete {name}?",
       "thisConfig": "this config",
-      "description": "The config and its snapshot history records will be removed. Any scheduled run is unregistered immediately.",
-      "purge": "Also delete {n} archive file on disk | Also delete {n} archive files on disk",
+      "description": "The config and schedule will be removed. Retained archives remain accessible in the snapshot list.",
+      "purge": "Also delete {n} archive | Also delete {n} archives",
       "nothingToPurge": "No archive files are tracked for this config — nothing to purge.",
-      "retainHint": "Unchecked: archive files are retained on disk and a paths list is shown on the Backups page so you can clean up later.",
+      "retainHint": "Unchecked: archives and their locations are retained, so they can still be restored or deleted later.",
       "confirmWithFiles": "Delete config + files",
       "confirm": "Delete config"
     },
@@ -1103,6 +1114,7 @@
     "restore": {
       "title": "Restore snapshot",
       "phase": {
+        "downloading": "Downloading and verifying S3 archive…",
         "starting": "Starting restore…",
         "stopping_server": "Stopping server…",
         "safety_snapshot": "Creating safety snapshot…",
@@ -1116,7 +1128,7 @@
       },
       "runningHint": "Restore is running in the background. A safety snapshot was created before any files were overwritten.",
       "confirmMessage": "Restore {name}?",
-      "safetyHint": "A safety snapshot is always created first, so you can roll back if the restored state is unusable.",
+      "safetyHint": "A safety snapshot is always created first. For S3 configurations this safety copy is kept on local disk, so rollback does not depend on network availability.",
       "chooseMode": "Choose restore mode",
       "inPlace": "In-place overlay",
       "inPlaceDescription": "Files in the archive overwrite the live server. Files that exist only on the live server are kept. Lower risk; new files added since the snapshot survive.",
@@ -1126,6 +1138,19 @@
       "inProgress": "Restore in progress",
       "restoring": "Restoring…",
       "restore": "Restore"
+    },
+    "checkRemote": "Check S3 availability",
+    "availability": {
+      "available": "Available",
+      "unavailable": "Unavailable",
+      "unchecked": "Not checked",
+      "none": "No archive"
+    },
+    "transfer": {
+      "uploading": "Uploading archive",
+      "downloading": "Downloading and verifying archive",
+      "verifying": "Verifying remote archive",
+      "publishing_metadata": "Publishing recovery metadata"
     },
     "job": {
       "backup": "Backup",

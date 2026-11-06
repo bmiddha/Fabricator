@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import time
+from unittest.mock import MagicMock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -48,6 +49,34 @@ def oidc_app(tmp_servers_root, monkeypatch):
 def sign_in(client, sub="alice"):
     with client.session_transaction() as state:
         state.update(authenticated=True, auth_method="oidc", issuer=ISSUER, sub=sub)
+
+
+@pytest.mark.parametrize("method,path,capability", [
+    ("post", "/backup-configs", "backups.config.write"),
+    ("put", "/backup-configs/cfg", "backups.config.write"),
+    ("delete", "/backup-configs/cfg?purge=1", "backups.delete"),
+    ("get", "/snapshots?check_remote=1", "backups.list"),
+    ("get", "/snapshots/snp/download", "backups.download"),
+    ("post", "/snapshots/snp/restore", "backups.restore"),
+    ("delete", "/snapshots/snp", "backups.delete"),
+])
+def test_s3_surfaces_remain_capability_scoped(oidc_app, monkeypatch, method, path, capability):
+    from backend.backups import destinations
+    # All checks must fail before resolving profiles or contacting storage.
+    spy = MagicMock(side_effect=AssertionError("S3 must not be contacted"))
+    monkeypatch.setattr(destinations, "_client", spy)
+    grants = {"server.view", "backups.config.write"} if "purge=1" in path else {"server.view"}
+    user = permissions.Principal(
+        "backup-reader", ISSUER, (), frozenset(),
+        {"a": frozenset(grants)}, {"a": ()},
+    )
+    oidc_app.extensions["oidc"].users[user.subject] = user
+    client = oidc_app.test_client()
+    sign_in(client, user.subject)
+    response = getattr(client, method)("/api/servers/a" + path)
+    assert response.status_code == 403
+    spy.assert_not_called()
+    assert capability not in grants
 
 
 def test_oidc_skips_password_setup_and_rejects_old_sessions(oidc_app):

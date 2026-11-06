@@ -49,12 +49,13 @@ import os
 import re
 import shutil
 import tarfile
+import tempfile
 import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from backend.backups import progress, storage
+from backend.backups import destinations, progress, storage
 from backend.server import storage as server_storage
 from backend.server.locks import get_server_lock
 from backend.server.registry import get_server_process_registry
@@ -89,6 +90,7 @@ def run_backup_async(config_id: str, *, trigger: str = "manual") -> str:
         kind="backup",
         config_id=config_id,
         trigger=trigger,
+        server_id=storage.lookup_server_for_config(config_id),
     )
 
     def _runner() -> None:
@@ -153,6 +155,13 @@ def run_backup(
 
     storage_path = storage.resolve_config_storage_path(cfg)
 
+    if (cfg.get("destination") or {}).get("type") == "s3":
+        storage_path.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="run-", dir=storage_path) as directory:
+            return _execute_backup(
+                server_id, server, cfg, Path(directory),
+                config_id=config_id, trigger=trigger, job_id=job_id,
+            )
     return _execute_backup(
         server_id,
         server,
@@ -182,6 +191,7 @@ def run_adhoc_backup_async(
         kind="backup",
         config_id=None,
         trigger=trigger,
+        server_id=server_id,
     )
 
     def _runner() -> None:
@@ -297,14 +307,18 @@ def _execute_backup(
     snapshot with a null configId.
     """
     storage_path.mkdir(parents=True, exist_ok=True)
+    progress.update(job_id, server_id=server_id)
 
     server_lock = get_server_lock(server_id)
     server_lock.acquire()
     start_time = time.monotonic()
     was_running = False
+    archive_path = None
     warnings: List[str] = []
     registry = get_server_process_registry()
     try:
+        if config_id and not storage.get_config_record(server_id, config_id):
+            raise ValueError("Backup config was deleted before the backup started")
         was_running = _flush_and_maybe_stop(
             server_id, server, cfg, registry, job_id, warnings
         )
@@ -319,20 +333,28 @@ def _execute_backup(
 
         progress.update(job_id, phase="finalizing")
         duration = round(time.monotonic() - start_time, 3)
-        snapshot = storage.record_snapshot(
-            server_id,
-            {
-                "configId": config_id,
-                "type": "backup",
-                "filePath": str(archive_path),
-                "fileName": archive_path.name,
-                "sizeBytes": size_bytes,
-                "durationSeconds": duration,
-                "status": "warning" if warnings else "success",
-                "message": "; ".join(warnings) if warnings else None,
-                "trigger": trigger,
-            },
-        )
+        snapshot_data = {
+            "serverId": server_id,
+            "createdAt": iso_z_now(),
+            "configId": config_id,
+            "type": "backup",
+            "filePath": str(archive_path),
+            "fileName": archive_path.name,
+            "sizeBytes": size_bytes,
+            "durationSeconds": duration,
+            "status": "warning" if warnings else "success",
+            "message": "; ".join(warnings) if warnings else None,
+            "trigger": trigger,
+        }
+        if (cfg.get("destination") or {}).get("type") == "s3":
+            # The archive is immutable now; network I/O must not extend downtime.
+            if was_running:
+                _restart_server_safe(server, registry, job_id)
+                was_running = False
+            destinations.publish(archive_path, snapshot_data, cfg, job_id)
+            duration = round(time.monotonic() - start_time, 3)
+            snapshot_data["durationSeconds"] = duration
+        snapshot = storage.record_snapshot(server_id, snapshot_data)
 
         if config_id is not None:
             _apply_retention(server_id, config_id, cfg)
@@ -373,7 +395,11 @@ def _execute_backup(
         )
         return snapshot
     finally:
-        server_lock.release()
+        try:
+            if archive_path and (cfg.get("destination") or {}).get("type") == "s3":
+                archive_path.unlink(missing_ok=True)
+        finally:
+            server_lock.release()
 
 
 def _flush_and_maybe_stop(
@@ -694,16 +720,15 @@ def _apply_retention(
 
     snaps = [
         s for s in storage.list_snapshots(server_id, config_id=config_id)
-        if s.get("type") == "backup"
+        if s.get("type") == "backup" and s.get("status") in ("success", "warning")
     ]
     # list_snapshots already returns newest-first.
     for stale in snaps[max_snapshots:]:
-        file_path = stale.get("filePath")
-        if file_path:
-            try:
-                Path(file_path).unlink(missing_ok=True)
-            except OSError:
-                logger.warning("Failed to unlink %s during retention", file_path)
+        try:
+            destinations.delete_archive(stale)
+        except (OSError, destinations.DestinationError) as exc:
+            logger.warning("Retention failed for snapshot %s: %s", stale["id"], exc)
+            raise RuntimeError(f"Backup stored, but retention failed for {stale['id']}: {exc}") from exc
         storage.delete_snapshot_record(server_id, stale["id"])
 
 

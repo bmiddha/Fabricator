@@ -932,6 +932,29 @@ Each config is annotated with `nextRunTime` pulled live from the scheduler.
 An empty `storagePath` defaults to `<install>/backups`. `maxSnapshots: 0` means unlimited. An empty
 `timezone` falls back to the host zone; a non-empty one must be a valid IANA zone.
 
+`destination` defaults to `{"type":"local"}` (including pre-existing configs).
+For S3-compatible storage, provide:
+
+```json
+{
+  "destination": {
+    "type": "s3",
+    "profile": "default",
+    "bucket": "my-backups",
+    "prefix": "minecraft",
+    "region": "us-east-1",
+    "endpointUrl": ""
+  }
+}
+```
+
+The backend profile must approve the bucket and endpoint; profile/server
+restrictions apply before saving or transferring. Empty region/endpoint fields
+use profile defaults. Unknown destination fields, including credential fields,
+are rejected. Saving validates configuration, not remote connectivity.
+`storagePath` is ignored for S3: local transfer staging uses `BACKUPS_DIR`.
+See [S3 operator setup and recovery](deploy/backups/README.md).
+
 **Response (201):** the stored config, with defaults filled in and `nextRunTime` annotated.
 
 ```json
@@ -976,16 +999,29 @@ config's effective storage path and recorded as snapshots of this config.
 }
 ```
 
-The response always reports both lists — no silent orphans. Without `purge`, the files stay on disk
-and all appear under `retained_paths`.
+The response always reports both lists — no silent orphans. Without `purge`,
+archives and snapshot records remain accessible and appear under `retained_paths`.
+S3 locations use `s3://bucket/exact-key`; purge deletes only ownership-checked
+keys recorded on each snapshot, even after changing the config destination.
+Remote deletion failure returns `502` and retains the config and failed snapshot
+records for retry (earlier successful deletes in the same purge stay deleted).
 
 ### Snapshots
 
 #### `GET /api/servers/<server_id>/snapshots`
 
+Newest-first snapshot records. Remote records have `filePath: null`,
+`destination`, `objectKey` and `sha256`; these describe the original destination,
+not the current configuration. `availability` is `available`, `unavailable`,
+`unchecked` (remote, not checked) or `none` (no archive). Optional
+`?check_remote=1` checks HEAD size/checksum metadata and returns a sanitized
+`availabilityError` on failure; it does not download the archive.
+
 #### `DELETE /api/servers/<server_id>/snapshots/<snapshot_id>`
 
-Unlinks the archive and removes the record. **Errors:** `404` unknown snapshot · `500` unlink failed
+Deletes the recorded local archive or exact remote archive/metadata keys, then
+removes the record. **Errors:** `404` unknown snapshot · `500` archive deletion
+failed (record retained for retry).
 
 #### `GET /api/servers/<server_id>/snapshots/<snapshot_id>/download`
 
@@ -994,7 +1030,10 @@ Unlinks the archive and removes the record. **Errors:** `404` unknown snapshot �
 `zip` repacks the archive on the fly into a flat directory tree for browsers; the temp file is
 cleaned up after the response.
 
-**Errors:** `404` unknown snapshot, or the archive is missing on disk
+S3 archives are downloaded to temporary local storage and SHA-256 verified before
+sending either format. Temporary files are cleaned on response close.
+**Errors:** `404` unknown snapshot, or local archive missing · `502` S3 failure
+or checksum mismatch.
 
 #### `POST /api/servers/<server_id>/snapshots/<snapshot_id>/restore`
 
@@ -1002,6 +1041,12 @@ cleaned up after the response.
 
 **Response (202):** `{ "success": true, "job_id": "..." }`
 **Errors:** `400` invalid mode · `404` unknown snapshot
+
+Remote archives are downloaded and verified before stopping the server. S3
+configs use `<install>/backups` for the mandatory local pre-restore safety copy.
+No live files change if download/verification or the safety snapshot fails.
+Job progress includes `uploading`, `verifying`, `publishing_metadata` and
+`downloading`, with `transferred_bytes` and `total_bytes` during transfers.
 
 ### Running backups
 
@@ -1538,6 +1583,7 @@ SERVER_ROOT=...                  # server install directories
 SERVER_INDEX_FILE=...            # servers.json
 JAVA_ROOT=...                    # managed Java runtimes
 BACKUPS_DIR=...                  # backup archives
+FABRICATOR_BACKUP_S3_PROFILES=... # JSON operator-approved S3 profiles/bucket grants; see deploy/backups/README.md
 FABRICATOR_APPDATA=...           # override the whole data directory
 
 # Authentication

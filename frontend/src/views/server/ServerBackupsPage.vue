@@ -12,7 +12,8 @@ import ConfirmModal from '../../components/modals/ConfirmModal.vue'
 import { useBackupsStore } from '../../stores/backups'
 import { useAuthStore } from '../../stores/auth'
 import { useServerStore } from '../../stores/server'
-import { t } from '../../i18n'
+import { t, te } from '../../i18n'
+import { formatFileSize } from '../../utils/format'
 import { useCapabilities } from '../../composables/useCapabilities'
 
 const store = useBackupsStore()
@@ -51,7 +52,12 @@ const activeJobLabel = computed(() => {
     : job.kind === 'world_import'
       ? t('backups.job.import')
       : t('backups.job.backup')
-  return `${kind} · ${phase.replace(/_/g, ' ')}`
+  const phaseKey = `backups.transfer.${phase}`
+  const label = te(phaseKey) ? t(phaseKey) : phase.replace(/_/g, ' ')
+  const bytes = ['uploading', 'downloading', 'verifying'].includes(phase) && job.total_bytes
+    ? ` · ${formatFileSize(job.transferred_bytes || 0)} / ${formatFileSize(job.total_bytes)}`
+    : ''
+  return `${kind} · ${label}${bytes}`
 })
 
 function onRestoreRequest(snapshot) {
@@ -103,6 +109,14 @@ onUnmounted(() => {
         <p class="backups-page__sub">{{ $t('backups.subtitle') }}</p>
       </div>
       <div class="backups-page__top-actions">
+        <AppButton
+          v-if="can('backups.list') && store.snapshots.some(s => s.destination?.type === 's3')"
+          variant="ghost"
+          size="md"
+          :loading="store.snapshotsLoading"
+          :disabled="store.snapshotsLoading || store.activeJob?.active"
+          @click="store.loadSnapshots(true)"
+        >{{ $t('backups.checkRemote') }}</AppButton>
         <AppButton v-if="can('backups.config.read') || can('backups.config.write')" variant="ghost" size="md" @click="store.openCreateConfig()">{{ $t('backups.schedules') }}</AppButton>
         <AppButton
           v-if="can('worlds.import')"

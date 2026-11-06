@@ -56,6 +56,7 @@ const DEFAULT_CONFIG_DRAFT = () => ({
   id: null,
   name: '',
   storagePath: '',
+  destination: { type: 'local', profile: 'default', bucket: '', prefix: '', region: '', endpointUrl: '' },
   maxSnapshots: 7,
   flush: true,
   shutdown: false,
@@ -76,6 +77,7 @@ function draftFromConfig(config) {
     id: config.id,
     name: config.name || '',
     storagePath: config.storagePath || '',
+    destination: { ...DEFAULT_CONFIG_DRAFT().destination, ...config.destination },
     maxSnapshots: typeof config.maxSnapshots === 'number' ? config.maxSnapshots : 7,
     flush: config.flush !== false,
     shutdown: Boolean(config.shutdown),
@@ -102,6 +104,7 @@ function draftToPayload(draft) {
   return {
     name: draft.name.trim(),
     storagePath: draft.storagePath.trim(),
+    destination: draft.destination.type === 's3' ? { ...draft.destination } : { type: 'local' },
     maxSnapshots: Number(draft.maxSnapshots) || 0,
     flush: Boolean(draft.flush),
     shutdown: Boolean(draft.shutdown),
@@ -237,12 +240,12 @@ export const useBackupsStore = defineStore('backups', () => {
     }
   }
 
-  async function loadSnapshots() {
+  async function loadSnapshots(checkRemote = false) {
     if (!serverId.value || !useAuthStore().can('backups.list', serverId.value)) return
     const isCurrent = requestScope()
     snapshotsLoading.value = true
     try {
-      const list = await listSnapshots(serverId.value)
+      const list = await listSnapshots(serverId.value, checkRemote)
       if (!isCurrent()) return
       snapshots.value = Array.isArray(list) ? list : []
     } catch (err) {

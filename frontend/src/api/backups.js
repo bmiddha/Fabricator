@@ -38,8 +38,8 @@ export async function deleteBackupConfig(serverId, configId, { purge = false } =
 }
 
 /** List all snapshots for a server, newest first (see backend sorting). */
-export async function listSnapshots(serverId) {
-  return get(`/api/servers/${serverId}/snapshots`)
+export async function listSnapshots(serverId, checkRemote = false) {
+  return get(`/api/servers/${serverId}/snapshots${checkRemote ? '?check_remote=1' : ''}`)
 }
 
 /**

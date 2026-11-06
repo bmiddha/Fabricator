@@ -24,6 +24,7 @@ in a follow-up banner. The brief is explicit on this: no silent orphans.
 """
 from __future__ import annotations
 
+from contextlib import ExitStack
 import logging
 import shutil
 import tarfile
@@ -33,10 +34,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from flask import Blueprint, after_this_request, jsonify, request, send_file
+from flask import Blueprint, jsonify, request, send_file
 from werkzeug.utils import secure_filename
 
 from backend.backups import (
+    destinations,
     progress,
     restore,
     scheduler,
@@ -45,6 +47,7 @@ from backend.backups import (
     world_import,
 )
 from backend.server.registry import get_server_process_registry
+from backend.server.locks import get_server_lock
 from backend.utils.routes import require_server
 from backend.utils.strings import bool_from_str
 
@@ -74,7 +77,7 @@ def create_backup_config(server_id, server):
     if not isinstance(payload, dict):
         return jsonify({"error": "Request body must be a JSON object"}), 400
 
-    error = _validate_config_payload(payload)
+    error = _validate_config_payload(payload, server_id=server_id)
     if error:
         return jsonify({"error": error}), 400
 
@@ -98,7 +101,7 @@ def update_backup_config(server_id, server, config_id):
     if not storage.get_config_record(server_id, config_id):
         return jsonify({"error": "Backup config not found"}), 404
 
-    error = _validate_config_payload(payload, partial=True)
+    error = _validate_config_payload(payload, partial=True, server_id=server_id)
     if error:
         return jsonify({"error": error}), 400
 
@@ -118,16 +121,35 @@ def update_backup_config(server_id, server, config_id):
 @require_server
 def delete_backup_config(server_id, server, config_id):
     purge = bool_from_str(request.args.get("purge"))
-    result = storage.delete_config(server_id, config_id)
-    if result is None:
-        return jsonify({"error": "Backup config not found"}), 404
-    removed_config, removed_snapshots = result
+    with get_server_lock(server_id):
+        cfg = storage.get_config_record(server_id, config_id)
+        if cfg is None:
+            return jsonify({"error": "Backup config not found"}), 404
+        snapshots = storage.list_snapshots(server_id, config_id)
+        remote = [s for s in snapshots if destinations.is_remote(s)]
+        remote_deleted = []
+        if purge:
+            for snap in remote:
+                try:
+                    destinations.delete_archive(snap)
+                except destinations.DestinationError as exc:
+                    return jsonify({"error": str(exc), "snapshot_id": snap["id"]}), 502
+                remote_deleted.append(destinations.location(snap))
+                storage.delete_snapshot_record(server_id, snap["id"])
+        # Retained archives remain addressable even after their config is gone.
+        result = storage.delete_config(server_id, config_id, keep_snapshots=True)
+        removed_config, removed_snapshots = result
 
     scheduler.remove_job(config_id)
 
     deleted, retained = _purge_archive_files(
-        removed_config, removed_snapshots, purge
+        removed_config, [s for s in removed_snapshots if not destinations.is_remote(s)], purge
     )
+    deleted.extend(remote_deleted)
+    retained.extend(destinations.location(s) for s in remote if not purge)
+    for snap in removed_snapshots:
+        if snap.get("filePath") in deleted or not destinations.has_archive(snap):
+            storage.delete_snapshot_record(server_id, snap["id"])
     return jsonify(
         {
             "success": True,
@@ -150,6 +172,12 @@ def delete_backup_config(server_id, server, config_id):
 @require_server
 def list_server_snapshots(server_id, server):
     snapshots = storage.list_snapshots(server_id)
+    for snapshot in snapshots:
+        state, error = destinations.availability(
+            snapshot, check_remote=bool_from_str(request.args.get("check_remote"))
+        )
+        snapshot["availability"] = state
+        snapshot["availabilityError"] = error
     return jsonify(snapshots)
 
 
@@ -162,16 +190,15 @@ def delete_snapshot(server_id, server, snapshot_id):
     if not snapshot:
         return jsonify({"error": "Snapshot not found"}), 404
 
-    file_path = snapshot.get("filePath")
-    if file_path:
+    with get_server_lock(server_id):
         try:
-            Path(file_path).unlink(missing_ok=True)
-        except OSError as exc:
+            destinations.delete_archive(snapshot)
+        except (OSError, destinations.DestinationError) as exc:
             return jsonify(
                 {"error": f"Failed to delete archive: {exc}"}
             ), 500
 
-    storage.delete_snapshot_record(server_id, snapshot_id)
+        storage.delete_snapshot_record(server_id, snapshot_id)
     return jsonify({"success": True})
 
 
@@ -184,29 +211,34 @@ def download_snapshot(server_id, server, snapshot_id):
     snapshot = storage.get_snapshot(server_id, snapshot_id)
     if not snapshot:
         return jsonify({"error": "Snapshot not found"}), 404
-    file_path = snapshot.get("filePath")
-    if not file_path or not Path(file_path).exists():
-        return jsonify({"error": "Archive file not found on disk"}), 404
-
-    fmt = request.args.get("format", "tar").lower()
-    if fmt == "zip":
-        zip_path, zip_name = _convert_to_zip(Path(file_path))
-
-        @after_this_request
-        def _cleanup(response):
-            try:
-                zip_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-            return response
-
-        return send_file(zip_path, as_attachment=True, download_name=zip_name)
-
-    return send_file(
-        file_path,
-        as_attachment=True,
-        download_name=snapshot.get("fileName") or Path(file_path).name,
-    )
+    resources = ExitStack()
+    try:
+        file_path = resources.enter_context(destinations.materialise(snapshot))
+        fmt = request.args.get("format", "tar").lower()
+        if fmt == "zip":
+            zip_path, zip_name = _convert_to_zip(file_path)
+            resources.callback(zip_path.unlink, missing_ok=True)
+            if destinations.is_remote(snapshot):
+                zip_name = Path(snapshot.get("fileName") or "archive.tar").stem + ".zip"
+            response = send_file(zip_path, as_attachment=True, download_name=zip_name)
+        else:
+            response = send_file(
+                file_path, as_attachment=True,
+                download_name=snapshot.get("fileName") or file_path.name,
+            )
+    except FileNotFoundError as exc:
+        resources.close()
+        return jsonify({"error": str(exc)}), 404
+    except destinations.DestinationError as exc:
+        resources.close()
+        return jsonify({"error": str(exc)}), 502
+    except BaseException:
+        resources.close()
+        raise
+    # Close open send_file handles before deleting temporary files on Windows.
+    response.direct_passthrough = False
+    response.call_on_close(resources.close)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -395,13 +427,18 @@ def _annotate_with_schedule(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _validate_config_payload(
-    data: Dict[str, Any], *, partial: bool = False
+    data: Dict[str, Any], *, partial: bool = False, server_id: Optional[str] = None
 ) -> Optional[str]:
     """Return an error string if the payload is unusable.
 
     Required fields on create: ``name``, ``storagePath``. On update
     (``partial=True``) the same fields are validated only when present.
     """
+    if "destination" in data:
+        try:
+            data["destination"] = destinations.normalise(data["destination"], server_id)
+        except (ValueError, destinations.DestinationError) as exc:
+            return str(exc)
     def _check_required(key: str) -> Optional[str]:
         value = data.get(key)
         if value is None or (isinstance(value, str) and not value.strip()):
@@ -413,7 +450,7 @@ def _validate_config_payload(
         if err:
             return err
     else:
-        for key in ("name", "storagePath"):
+        for key in ("name",):
             if key in data:
                 value = data.get(key)
                 if isinstance(value, str) and not value.strip():

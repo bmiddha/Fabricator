@@ -12,6 +12,10 @@ Phase vocabulary (set by ``backups/service.py`` and ``backups/restore.py``):
     stopping_server — graceful shutdown in progress
     staging         — copytree to .staging-<...> with exclusions applied
     archiving       — building tar / tar.gz outputs
+    uploading       — S3 archive upload (transferred_bytes / total_bytes)
+    verifying       — remote archive SHA-256 read-back
+    publishing_metadata — writing versioned remote recovery metadata
+    downloading     — fetching and verifying a remote archive before restore
     finalizing      — atomic publish to storagePath + retention
     restarting      — bringing the server back if it was running
     safety_snapshot — restore/import: writing the mandatory safety .tar
