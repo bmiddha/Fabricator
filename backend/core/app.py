@@ -10,7 +10,7 @@ from backend.core.config import get_config
 from backend.auth import init_auth
 from backend.server.routes import server_bp
 from backend.modrinth.routes import modrinth_bp
-from backend.modrinth.client_pack_routes import client_pack_bp
+from backend.modrinth.client_pack_routes import client_pack_bp, client_pack_share_bp
 from backend.system.routes import system_bp
 from backend.backups.routes import backups_bp
 from backend.server.players.routes import players_bp
@@ -58,6 +58,7 @@ def create_app() -> Flask:
     app.register_blueprint(server_bp)
     app.register_blueprint(modrinth_bp)
     app.register_blueprint(client_pack_bp)
+    app.register_blueprint(client_pack_share_bp)
     app.register_blueprint(system_bp)
     app.register_blueprint(backups_bp)
     app.register_blueprint(players_bp)
@@ -114,6 +115,17 @@ def create_app() -> Flask:
             return send_from_directory(static_folder_path, path)
 
         if index_file.exists():
+            if path == "client-pack-share":
+                response = send_from_directory(static_folder_path, "index.html")
+                response.headers["Cache-Control"] = "no-store"
+                response.headers["Referrer-Policy"] = "no-referrer"
+                response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+                response.headers["Content-Security-Policy"] = (
+                    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                    "img-src 'self' data:; connect-src 'self'; object-src 'none'; "
+                    "base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+                )
+                return response
             return send_from_directory(static_folder_path, "index.html")
 
         return (

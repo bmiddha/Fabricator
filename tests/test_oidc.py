@@ -149,6 +149,10 @@ def test_modrinth_project_details_allow_mod_readers_without_install(oidc_app, mo
     ("post", "/exports", "clientpacks.export"),
     ("get", "/exports", "clientpacks.download"),
     ("get", "/exports/" + "a" * 32 + "/download", "clientpacks.download"),
+    ("get", "/shares", "clientpacks.manage"),
+    ("post", "/exports/" + "a" * 32 + "/shares", "clientpacks.manage"),
+    ("delete", "/shares/" + "a" * 32, "clientpacks.manage"),
+    ("delete", "/exports/" + "a" * 32, "clientpacks.manage"),
 ])
 def test_client_pack_permissions_are_separate_and_server_scoped(oidc_app, method, suffix, permission):
     client = oidc_app.test_client()
@@ -165,6 +169,7 @@ def test_client_pack_permissions_are_separate_and_server_scoped(oidc_app, method
 
 def test_route_permission_coverage(oidc_app):
     exceptions = {
+        ("POST", "/api/client-pack-shares/download"),
         ("GET", "/api/health"), ("GET", "/api/auth/status"), ("POST", "/api/auth/logout"),
         ("GET", "/api/auth/oidc/login"), ("GET", "/api/auth/oidc/callback"),
         *(("POST", "/api/auth/" + suffix) for suffix in ["setup", "login", "enable", "disable", "change-password"]),
@@ -176,6 +181,52 @@ def test_route_permission_coverage(oidc_app):
         for method in rule.methods - {"OPTIONS", "HEAD"}
     }
     assert live == set(permissions.RULES) | exceptions
+
+
+def test_share_links_are_owner_server_and_capability_scoped_without_oidc_redirect(oidc_app, tmp_servers_root):
+    from backend.modrinth import client_pack as packs, client_pack_shares as shares
+    from backend.server import storage
+    from tests.test_client_pack import Catalog
+    root = tmp_servers_root / "servers" / "shared"
+    root.mkdir(parents=True)
+    server = storage.create_server({
+        "id": "a", "name": "Pack", "installPath": str(root), "loader": "fabric",
+        "loaderVersion": "0.16.9", "version": "1.21.1",
+    })
+    catalog = Catalog()
+    review = packs.plan(server, root, catalog)
+    artifact = packs.build(server, root, catalog, review["fingerprint"])
+    grants = frozenset({"server.view", "clientpacks.manage", "clientpacks.download"})
+    users = oidc_app.extensions["oidc"].users
+    for sub in ("maker", "other"):
+        users[sub] = permissions.Principal(sub, ISSUER, (), frozenset(), {"a": grants}, {"a": ()})
+    client = oidc_app.test_client()
+    sign_in(client, "maker")
+    base = "/api/servers/a/client-pack"
+    response = client.post(base + f'/exports/{artifact["id"]}/shares', json={"expiry_seconds": 3600})
+    assert response.status_code == 201
+    link = response.get_json()
+    assert client.get(base + "/shares").get_json()["shares"][0]["id"] == link["id"]
+    assert client.post(f'/api/servers/b/client-pack/exports/{artifact["id"]}/shares',
+                       json={"expiry_seconds": 3600}).status_code == 404
+    sign_in(client, "other")
+    assert client.get(base + "/shares").get_json()["shares"] == []
+    assert client.delete(base + f'/shares/{link["id"]}').status_code == 404
+    for permission in ("clientpacks.manage", "clientpacks.download"):
+        users["other"] = permissions.Principal("other", ISSUER, (), frozenset(),
+                                               {"a": grants - {permission}}, {"a": ()})
+        assert client.get(base + "/shares").status_code == 403
+        assert client.post(base + f'/exports/{artifact["id"]}/shares', json={"expiry_seconds": 3600}).status_code == 403
+        assert client.delete(base + f'/shares/{link["id"]}').status_code == 403
+    anonymous = oidc_app.test_client(use_cookies=False)
+    download = anonymous.post("/api/client-pack-shares/download", json={"token": link["url"].split("#")[1]})
+    assert download.status_code == 200 and "Location" not in download.headers
+    assert download.data == packs.artifact_path(server, artifact["id"])[0].read_bytes()
+    download.close()
+    assert anonymous.get(base + "/exports").status_code == 401
+    sign_in(client, "maker")
+    assert client.delete(base + f'/shares/{link["id"]}').status_code == 200
+    assert shares.listing(server, users["maker"].owner) == []
 
 
 def test_custom_role_union_overrides_and_scope(monkeypatch):

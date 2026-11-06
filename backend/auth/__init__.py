@@ -28,6 +28,7 @@ _PUBLIC_ENDPOINTS = frozenset(
         ("GET", "/api/health"),
         ("GET", "/api/auth/oidc/login"),
         ("GET", "/api/auth/oidc/callback"),
+        ("POST", "/api/client-pack-shares/download"),
     }
 )
 

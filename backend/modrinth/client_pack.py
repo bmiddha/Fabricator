@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 import os
 import re
@@ -36,6 +37,7 @@ MAX_SOURCE_BYTES = 8 * 1024 * 1024
 MAX_FILES = 2000
 ARTIFACT_TTL = 24 * 3600
 MAX_ARTIFACTS = 5
+MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
 CLIENT_TAGS = {
     "client_only", "client_only_server_optional", "client_and_server",
     "client_or_server", "client_or_server_prefers_both", "server_only_client_optional",
@@ -45,6 +47,13 @@ SERVER_TAGS = {"server_only", "dedicated_server_only", "singleplayer_only"}
 
 class PackError(ValueError):
     pass
+
+
+class _ArchiveWriter(io.BufferedWriter):
+    def write(self, data):
+        if self.tell() + len(data) > MAX_ARTIFACT_BYTES:
+            raise PackError("Client archive exceeds the 16 MiB storage limit; reduce selected settings or files")
+        return super().write(data)
 
 
 def _key(value):
@@ -730,13 +739,24 @@ def public_plan(value):
 
 
 def _sweep(server, *, reserve=False):
+    from backend.modrinth.client_pack_shares import active
     directory = _directory(server) / "exports"
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    pinned = {record["artifact_id"] for record in active(server)}
     files = sorted(directory.glob("*.mrpack"), key=lambda path: path.stat().st_mtime, reverse=True)
-    for index, path in enumerate(files):
-        if index >= MAX_ARTIFACTS - int(reserve) or path.stat().st_mtime < time.time() - ARTIFACT_TTL:
+    limit = MAX_ARTIFACTS - int(reserve)
+    protected = [path for path in files if path.stem in pinned]
+    if len(protected) > limit:
+        raise PackError("All five archive slots are pinned by active share links. Revoke links or explicitly delete a shared archive before generating another.")
+    kept = len(protected)
+    for path in files:
+        if path.stem in pinned:
+            continue
+        if kept >= limit or path.stat().st_mtime < time.time() - ARTIFACT_TTL:
             path.unlink(missing_ok=True)
             path.with_suffix(".json").unlink(missing_ok=True)
+        else:
+            kept += 1
     for path in directory.iterdir():
         if (re.fullmatch(r"[a-f0-9]{32}\.(?:tmp|json)", path.name)
                 and not path.with_suffix(".mrpack").exists()
@@ -746,8 +766,18 @@ def _sweep(server, *, reserve=False):
 
 
 def artifacts(server):
+    from backend.modrinth.client_pack_shares import active
     directory = _sweep(server)
-    return [_read(path.with_suffix(".json"), {}) for path in sorted(directory.glob("*.mrpack"), reverse=True)]
+    grants = active(server)
+    result = []
+    for path in sorted(directory.glob("*.mrpack"), reverse=True):
+        links = [record for record in grants if record["artifact_id"] == path.stem]
+        result.append({
+            **_read(path.with_suffix(".json"), {}),
+            "active_shares": len(links),
+            "pinned_until": max((record["expires_at"] for record in links), default=None),
+        })
+    return result
 
 
 def build(server, install_path, client, expected):
@@ -766,10 +796,11 @@ def build(server, install_path, client, expected):
     target = directory / f"{artifact_id}.mrpack"
     temporary = directory / f"{artifact_id}.tmp"
     try:
-        with zipfile.ZipFile(temporary, "x", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr(mrpack.INDEX_NAME, json.dumps(index, ensure_ascii=False).encode("utf-8"))
-            for path, data in value["_overrides"].items():
-                archive.writestr(f"client-overrides/{path}", data)
+        with _ArchiveWriter(io.FileIO(temporary, "x")) as output:
+            with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr(mrpack.INDEX_NAME, json.dumps(index, ensure_ascii=False).encode("utf-8"))
+                for path, data in value["_overrides"].items():
+                    archive.writestr(f"client-overrides/{path}", data)
         # Detect changes from outside the application lock as well as API edits.
         if plan(storage.get_server(server["id"]) or server, install_path, client)["fingerprint"] != value["fingerprint"]:
             raise PackError("Sources changed during generation; no archive was published")
@@ -800,6 +831,7 @@ def artifact_path(server, artifact_id):
 
 def delete_state(server, install_path=None):
     directory = _directory(server)
+    (directory / "shares.json").unlink(missing_ok=True)
     exports = directory / "exports"
     if exports.exists():
         for path in exports.iterdir():

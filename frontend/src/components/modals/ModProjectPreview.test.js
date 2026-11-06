@@ -45,6 +45,7 @@ const Preview = (await vite.ssrLoadModule('/src/components/modals/ModProjectPrev
 const Browser = (await vite.ssrLoadModule('/src/components/modals/ModBrowserModal.vue')).default
 const Installed = (await vite.ssrLoadModule('/src/views/server/ServerModsPage.vue')).default
 const ClientPack = (await vite.ssrLoadModule('/src/components/ClientPackPanel.vue')).default
+const SharePage = (await vite.ssrLoadModule('/src/views/ClientPackSharePage.vue')).default
 const apps = []
 const originalFetch = globalThis.fetch
 after(async () => { await vite.close(); dom.window.close() })
@@ -126,6 +127,7 @@ test('client pack blocks generation on errors, saves explicit exclusions and mar
     if (url.endsWith('/exports')) return Response.json({ exports: [{
       id: 'old', filename: 'old.mrpack', fingerprint: 'old', created_at: 1700000000, size: 100,
     }] })
+    if (url.endsWith('/shares')) return Response.json({ shares: [] })
     return Response.json(current)
   }
   const { root } = mount(ClientPack, { serverId: 'preview', server: { loader: 'fabric' } },
@@ -195,6 +197,131 @@ test('client pack displays request failures and permits retry', async () => {
   await settle()
   assert.equal(root.querySelector('[role=alert]'), null)
   assert.match(root.textContent, /Pack contents/)
+})
+
+test('share managers create one-time links, copy, revoke and confirm shared archive deletion', async () => {
+  const artifact = { id: 'snapshot', filename: 'snapshot.mrpack', created_at: 1700000000, size: 100 }
+  let artifacts = [artifact]
+  let links = []
+  let createFails = true
+  let copied = ''
+  const calls = []
+  document.execCommand = () => {
+    copied = document.querySelector('textarea').value
+    return true
+  }
+  globalThis.fetch = async (url, options) => {
+    calls.push([url, options?.method])
+    if (options?.method === 'POST') {
+      assert.deepEqual(JSON.parse(options.body), { expiry_seconds: 86400 })
+      if (createFails) return Response.json({ error: 'Storage full; revoke a link and retry' }, { status: 400 })
+      links = [{ id: 'grant', artifact_id: artifact.id, expires_at: 1900000000, created_at: 1700000000 }]
+      artifacts = [{ ...artifact, active_shares: 1, pinned_until: 1900000000 }]
+      return Response.json({ ...links[0], url: '/client-pack-share#opaque-secret' }, { status: 201 })
+    }
+    if (options?.method === 'DELETE') {
+      if (url.endsWith('/exports/snapshot')) {
+        assert.deepEqual(JSON.parse(options.body), { confirm_shared: true })
+        artifacts = []
+      }
+      links = []
+      return Response.json({ success: true })
+    }
+    if (url.endsWith('/shares')) return Response.json({ shares: links })
+    assert.ok(url.endsWith('/exports'), 'Managing shares must not read live server mods/settings')
+    return Response.json({ exports: artifacts })
+  }
+  try {
+    const { root } = mount(ClientPack, { serverId: 'preview', server: { loader: 'fabric' } },
+      ['server.view', 'clientpacks.manage', 'clientpacks.download'])
+    button('Open client pack', root).click()
+    await settle()
+    assert.match(root.textContent, /without signing in/)
+    button('Share archive', root).click()
+    await settle()
+    button('Create anonymous link', root).click()
+    await settle()
+    assert.match(root.querySelector('[role=alert]').textContent, /Storage full/)
+    createFails = false
+    button('Create anonymous link', root).click()
+    await settle()
+    assert.match(root.textContent, /cannot be retrieved again/)
+    assert.match(root.textContent, /retained until at least/)
+    button('Copy link', root).click()
+    await settle()
+    assert.equal(copied, 'http://localhost/client-pack-share#opaque-secret')
+    assert.match(root.textContent, /Link copied/)
+    button('Revoke link', root).click()
+    await settle()
+    assert.match(document.querySelector('dialog').textContent, /cannot be recalled/)
+    button('Confirm', document.querySelector('dialog')).click()
+    await settle()
+    assert.equal(root.querySelector('input[readonly]'), null)
+    assert.match(root.textContent, /no active share links/)
+    button('Create anonymous link', root).click()
+    await settle()
+    button('Delete archive', root).click()
+    await settle()
+    assert.match(document.querySelector('dialog').textContent, /ALL its active share links/)
+    button('Confirm', document.querySelector('dialog')).click()
+    await settle()
+    assert.match(root.textContent, /No downloadable exports/)
+    assert.ok(calls.some(([url, method]) => method === 'DELETE' && url.endsWith('/shares/grant')))
+  } finally { delete document.execCommand }
+})
+
+test('anonymous share page removes the fragment and downloads without cookies or auth redirects', async () => {
+  window.history.replaceState({ current: '/client-pack-share#opaque-secret' }, '', '/client-pack-share#opaque-secret')
+  const calls = []
+  let clicked = false
+  const originalClick = window.HTMLAnchorElement.prototype.click
+  const originalCreate = URL.createObjectURL
+  const originalRevoke = URL.revokeObjectURL
+  URL.createObjectURL = () => 'blob:client-pack'
+  URL.revokeObjectURL = () => {}
+  window.HTMLAnchorElement.prototype.click = function () {
+    clicked = this.download === 'client-pack.mrpack' && this.getAttribute('href') === 'blob:client-pack'
+  }
+  globalThis.fetch = async (url, options) => {
+    calls.push([url, options])
+    return new Response('fixture mrpack bytes', { headers: { 'Content-Type': 'application/x-modrinth-modpack+zip' } })
+  }
+  try {
+    const { root } = mount(SharePage)
+    assert.equal(window.location.hash, '')
+    assert.equal(window.history.state, null)
+    assert.equal(calls.length, 0)
+    button('Download .mrpack', root).click()
+    await settle()
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0][0], '/api/client-pack-shares/download')
+    const options = calls[0][1]
+    assert.equal(options.credentials, 'omit')
+    assert.equal(options.referrerPolicy, 'no-referrer')
+    assert.equal(options.cache, 'no-store')
+    assert.deepEqual(JSON.parse(options.body), { token: 'opaque-secret' })
+    assert.equal(clicked, true)
+    assert.match(root.textContent, /Download started/)
+  } finally {
+    window.HTMLAnchorElement.prototype.click = originalClick
+    URL.createObjectURL = originalCreate
+    URL.revokeObjectURL = originalRevoke
+  }
+})
+
+test('anonymous share page exposes expiration and throttling errors with retry', async () => {
+  window.history.replaceState({}, '', '/client-pack-share#expired')
+  let status = 404
+  globalThis.fetch = async () => Response.json({}, { status, headers: { 'Retry-After': '12' } })
+  const { root } = mount(SharePage)
+  button('Download .mrpack', root).click()
+  await settle()
+  assert.match(root.querySelector('[role=alert]').textContent, /expired or revoked/)
+  status = 429
+  button('Download .mrpack', root).click()
+  await settle()
+  assert.match(root.querySelector('[role=alert]').textContent, /Wait 12 seconds/)
+  assert.equal(button('Download .mrpack', root).disabled, false)
 })
 
 test('installed entry points handle manifest, disabled hash match and unknown files for read-only users', async () => {

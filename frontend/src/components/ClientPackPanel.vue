@@ -1,9 +1,11 @@
 <script setup>
-import { computed, defineAsyncComponent, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
 import Panel from './ui/Panel.vue'
 import AppButton from './ui/AppButton.vue'
 import SearchResultCard from './ui/SearchResultCard.vue'
-import { get, post, put, apiRequest } from '../api/client'
+import { get, post, put, del, apiRequest } from '../api/client'
+import { copyToClipboard } from '../utils/clipboard'
+import { t } from '../i18n'
 import { getModVersions, searchMods } from '../api/modrinth'
 import { useCapabilities } from '../composables/useCapabilities'
 import { formatFileSize } from '../utils/format'
@@ -18,6 +20,13 @@ const plan = ref(null)
 const config = ref(null)
 const dirty = ref(false)
 const exports = ref([])
+const shares = ref([])
+const shareTarget = ref('')
+const shareTtl = ref(86400)
+const newShare = ref(null)
+const copied = ref(false)
+const confirmation = ref(null)
+const confirmationDialog = ref(null)
 const query = ref('')
 const results = ref([])
 const searching = ref(false)
@@ -33,6 +42,7 @@ const base = computed(() => `/api/servers/${encodeURIComponent(props.serverId)}/
 const editable = computed(() => can('clientpacks.manage'))
 const readable = computed(() => can('clientpacks.read'))
 const canDownload = computed(() => can('clientpacks.download'))
+const canShare = computed(() => editable.value && canDownload.value)
 const supported = computed(() => ['fabric', 'quilt', 'forge', 'neoforge'].includes(props.server?.loader))
 const canExport = computed(() => can('clientpacks.export') && plan.value && !dirty.value && !plan.value.errors.length)
 const pinnedLoader = computed(() => Object.entries(plan.value?.dependencies || {}).find(([key]) => key !== 'minecraft')?.[1] || '')
@@ -40,6 +50,11 @@ const pendingSelections = computed(() => (config.value?.selections || []).filter
   selection => selection.key.startsWith('client:') && !plan.value?.entries.some(entry => entry.key === selection.key)
 ))
 let generation = 0
+watch(confirmation, async (value) => {
+  if (!value) return
+  await nextTick()
+  confirmationDialog.value?.showModal()
+})
 
 async function operation(fn) {
   busy.value = true
@@ -51,15 +66,18 @@ async function refresh() {
   // Both endpoints share the non-blocking per-server lock.
   const value = readable.value ? await get(base.value) : null
   const artifacts = canDownload.value ? await get(`${base.value}/exports`) : { exports: [] }
+  const links = canShare.value ? await get(`${base.value}/shares`) : { shares: [] }
   if (current !== generation) return
   plan.value = value
   config.value = value ? structuredClone(value.config) : null
   exports.value = artifacts.exports
+  shares.value = links.shares
   dirty.value = false
 }
 async function toggle() {
   expanded.value = !expanded.value
   if (expanded.value) await operation(refresh)
+  else newShare.value = null
 }
 async function save() {
   await operation(async () => {
@@ -117,6 +135,39 @@ async function build() {
     else exports.value = [artifact, ...exports.value]
   })
 }
+async function refreshDownloads() {
+  exports.value = (await get(`${base.value}/exports`)).exports
+  shares.value = (await get(`${base.value}/shares`)).shares
+  if (!exports.value.some(artifact => artifact.id === shareTarget.value)) shareTarget.value = ''
+}
+async function createShare() {
+  await operation(async () => {
+    const created = await post(`${base.value}/exports/${shareTarget.value}/shares`, { expiry_seconds: shareTtl.value })
+    newShare.value = { ...created, url: new URL(created.url, window.location.origin).href }
+    copied.value = false
+    await refreshDownloads()
+  })
+}
+async function copyShare() {
+  error.value = ''
+  if (await copyToClipboard(newShare.value.url)) copied.value = true
+  else error.value = t('clientPack.shareCopyFailed')
+}
+async function confirmAction() {
+  await operation(async () => {
+    const target = confirmation.value
+    if (target.kind === 'revoke') {
+      await del(`${base.value}/shares/${target.id}`)
+      if (newShare.value?.id === target.id) newShare.value = null
+    } else {
+      await del(`${base.value}/exports/${target.id}`, { confirm_shared: true })
+      if (shareTarget.value === target.id) shareTarget.value = ''
+      if (newShare.value?.artifact_id === target.id) newShare.value = null
+    }
+    confirmation.value = null
+    await refreshDownloads()
+  })
+}
 async function importMetadata(event) {
   const file = event.target.files?.[0]
   if (!file) return
@@ -134,6 +185,10 @@ watch(() => props.serverId, () => {
   plan.value = null
   config.value = null
   exports.value = []
+  shares.value = []
+  shareTarget.value = ''
+  newShare.value = null
+  confirmation.value = null
   dirty.value = false
   results.value = []
   chosen.value = null
@@ -254,14 +309,58 @@ watch(() => props.serverId, () => {
               <p>{{ new Date(artifact.created_at * 1000).toLocaleString() }} &middot; {{ formatFileSize(artifact.size) }}</p>
               <p v-if="plan && artifact.fingerprint !== plan.fingerprint" class="client-pack__stale">{{ $t('clientPack.outdated') }}</p>
               <p v-else-if="!plan">{{ $t('clientPack.snapshot') }}</p>
+              <p v-if="artifact.active_shares" class="client-pack__stale">
+                {{ $t('clientPack.pinned', { count: artifact.active_shares, date: new Date(artifact.pinned_until * 1000).toLocaleString() }) }}
+              </p>
             </div>
-            <a v-if="canDownload" :href="`${base}/exports/${artifact.id}/download`" download>{{ $t('clientPack.download') }}</a>
+            <div class="client-pack__actions">
+              <a v-if="canDownload" :href="`${base}/exports/${artifact.id}/download`" download>{{ $t('clientPack.download') }}</a>
+              <AppButton v-if="canShare" size="sm" variant="ghost" :disabled="busy" @click="shareTarget = artifact.id">{{ $t('clientPack.share') }}</AppButton>
+              <AppButton v-if="canShare" size="sm" variant="ghost" :disabled="busy" @click="confirmation = { kind: 'delete', id: artifact.id }">{{ $t('clientPack.deleteExport') }}</AppButton>
+            </div>
+          </div>
+        </div>
+        <div v-if="canShare" class="client-pack__section">
+          <h4>{{ $t('clientPack.shares') }}</h4>
+          <p>{{ $t('clientPack.shareWarning') }}</p>
+          <p>{{ $t('clientPack.shareStorage') }}</p>
+          <form v-if="shareTarget" class="client-pack__fields" @submit.prevent="createShare">
+            <p>{{ $t('clientPack.shareArtifact', { id: shareTarget.slice(0, 12) }) }}</p>
+            <label>{{ $t('clientPack.shareExpiry') }}
+              <select v-model="shareTtl" :disabled="busy">
+                <option :value="3600">{{ $t('clientPack.shareHour') }}</option>
+                <option :value="86400">{{ $t('clientPack.shareDay') }}</option>
+                <option :value="604800">{{ $t('clientPack.shareWeek') }}</option>
+              </select>
+            </label>
+            <AppButton type="submit" :disabled="busy">{{ $t('clientPack.createShare') }}</AppButton>
+          </form>
+          <div v-if="newShare" class="client-pack__review">
+            <p>{{ $t('clientPack.shareOneTime', { date: new Date(newShare.expires_at * 1000).toLocaleString() }) }}</p>
+            <label>{{ $t('clientPack.shareUrl') }}<input :value="newShare.url" readonly autocomplete="off" spellcheck="false" @focus="$event.target.select()" /></label>
+            <AppButton variant="ghost" :disabled="busy" @click="copyShare">{{ copied ? $t('clientPack.shareCopied') : $t('clientPack.copyShare') }}</AppButton>
+            <span v-if="copied" role="status">{{ $t('clientPack.shareCopied') }}</span>
+          </div>
+          <p v-if="!shares.length">{{ $t('clientPack.noShares') }}</p>
+          <div v-for="link in shares" :key="link.id" class="client-pack__entry">
+            <p>{{ $t('clientPack.shareDetails', { id: link.artifact_id.slice(0, 12), date: new Date(link.expires_at * 1000).toLocaleString() }) }}</p>
+            <AppButton variant="ghost" size="sm" :disabled="busy" @click="confirmation = { kind: 'revoke', id: link.id }">{{ $t('clientPack.revokeShare') }}</AppButton>
           </div>
         </div>
       </template>
     </div>
   </Panel>
   <Preview v-if="preview" :show="true" :project-id="preview.project_id" :title="preview.title" @close="preview = null" />
+  <dialog v-if="confirmation" ref="confirmationDialog" class="client-pack__confirm" aria-labelledby="client-pack-confirm-title"
+    @cancel.prevent="!busy && (confirmation = null)">
+    <h3 id="client-pack-confirm-title">{{ $t(confirmation.kind === 'delete' ? 'clientPack.deleteExport' : 'clientPack.revokeShare') }}</h3>
+    <p>{{ $t(confirmation.kind === 'delete' ? 'clientPack.deleteWarning' : 'clientPack.revokeWarning') }}</p>
+    <p v-if="error" role="alert" class="client-pack__error">{{ error }}</p>
+    <div class="client-pack__actions">
+      <AppButton variant="ghost" :disabled="busy" autofocus @click="confirmation = null">{{ $t('common.cancel') }}</AppButton>
+      <AppButton variant="danger" :disabled="busy" :loading="busy" @click="confirmAction">{{ $t('common.confirm') }}</AppButton>
+    </div>
+  </dialog>
 </template>
 
 <style scoped>
@@ -286,6 +385,9 @@ watch(() => props.serverId, () => {
 .client-pack__results { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: var(--space-3); }
 .client-pack summary { cursor: pointer; color: var(--text-primary); }
 .client-pack a { color: var(--info); }
+.client-pack__confirm { margin: auto; width: min(440px, calc(100% - var(--space-5))); padding: var(--space-5); color: var(--text-primary); background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-md); }
+.client-pack__confirm > * + * { margin-top: var(--space-4); }
+.client-pack__confirm::backdrop { background: rgb(0 0 0 / 70%); }
 .client-pack :is(input, select, summary, a):focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 @media (max-width: 600px) {
   .client-pack__fields { display: grid; grid-template-columns: minmax(0, 1fr); }

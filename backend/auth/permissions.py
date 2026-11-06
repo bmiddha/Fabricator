@@ -88,6 +88,13 @@ for method, suffix, permission in [
     ("DELETE", "/players/known", "players.known.delete"),
 ]:
     _server(method, suffix, permission)
+for method, suffix in [
+    ("GET", "/client-pack/shares"),
+    ("POST", "/client-pack/exports/<artifact_id>/shares"),
+    ("DELETE", "/client-pack/shares/<share_id>"),
+    ("DELETE", "/client-pack/exports/<artifact_id>"),
+]:
+    _server(method, suffix, "clientpacks.manage", "clientpacks.download")
 for suffix, methods, permission in [
     ("/players/bans", ("POST", "DELETE"), "players.bans.manage"),
     ("/players/bans/ip", ("POST", "DELETE"), "players.bans.manage"),

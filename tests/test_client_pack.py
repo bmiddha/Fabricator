@@ -653,6 +653,205 @@ def test_export_download_upload_install_round_trip(client, pack_server, monkeypa
     assert original == {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()}
 
 
+@pytest.fixture
+def shared_export(auth_app, authed_client, pack_server, monkeypatch):
+    from backend.modrinth import client_pack_routes, client_pack_shares
+    server, root, catalog = pack_server
+    install(root, catalog, catalog.add("shared"))
+    (root / "options.txt").write_bytes(b"fov:90")
+    save(server, overrides=["server:options.txt"])
+    monkeypatch.setattr(client_pack_routes, "modrinth_client", catalog)
+    base = f'/api/servers/{server["id"]}/client-pack'
+    preview = authed_client.get(base).get_json()
+    generated = authed_client.post(base + "/exports", json={"fingerprint": preview["fingerprint"]})
+    assert generated.status_code == 201
+    artifact = generated.get_json()
+    path, _ = packs.artifact_path(server, artifact["id"])
+    return server, authed_client, auth_app.test_client(use_cookies=False), base, artifact, path, client_pack_shares
+
+
+def mint_share(manager, base, artifact, ttl=86400):
+    response = manager.post(base + f'/exports/{artifact["id"]}/shares', json={"expiry_seconds": ttl})
+    assert response.status_code == 201, response.get_json()
+    link = response.get_json()
+    return link, link["url"].split("#", 1)[1]
+
+
+def test_anonymous_share_is_exact_private_artifact_and_only_hash_is_stored(shared_export):
+    server, manager, anonymous, base, artifact, path, shares = shared_export
+    link, token = mint_share(manager, base, artifact)
+    response = anonymous.post("/api/client-pack-shares/download", json={"token": token})
+    assert response.status_code == 200
+    assert response.data == path.read_bytes()
+    assert hashlib.sha512(response.data).digest() == hashlib.sha512(path.read_bytes()).digest()
+    assert response.mimetype == "application/x-modrinth-modpack+zip"
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+    assert response.headers["Cache-Control"] == "private, no-store"
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert "attachment" in response.headers["Content-Disposition"]
+    assert "Set-Cookie" not in response.headers
+    response.close()
+    stored = shares._path(server).read_text()
+    assert token not in stored and packs._key(token) in stored
+    listed = manager.get(base + "/shares").get_json()["shares"]
+    assert listed == [{key: value for key, value in link.items() if key != "url"}]
+    assert token not in json.dumps(listed) and "token_hash" not in json.dumps(listed)
+    for suffix in ("", "/exports", "/shares", f'/exports/{artifact["id"]}/download'):
+        assert anonymous.get(base + suffix).status_code == 401
+    assert anonymous.post(base + f'/exports/{artifact["id"]}/shares', json={"expiry_seconds": 3600}).status_code == 401
+    assert anonymous.get("/api/servers").status_code == 401
+
+
+def test_share_unknown_expired_and_revoked_fail_identically(shared_export, monkeypatch):
+    from types import SimpleNamespace
+    server, manager, anonymous, base, artifact, _, shares = shared_export
+    link, token = mint_share(manager, base, artifact, 3600)
+    unknown = anonymous.post("/api/client-pack-shares/download", json={"token": "unknown"})
+    assert unknown.status_code == 404
+    assert manager.delete(base + f'/shares/{link["id"]}').status_code == 200
+    revoked = anonymous.post("/api/client-pack-shares/download", json={"token": token})
+    assert (revoked.status_code, revoked.data) == (unknown.status_code, unknown.data)
+    link, token = mint_share(manager, base, artifact, 3600)
+    monkeypatch.setattr(shares, "time", SimpleNamespace(time=lambda: link["expires_at"] + 1))
+    expired = anonymous.post("/api/client-pack-shares/download", json={"token": token})
+    assert (expired.status_code, expired.data) == (unknown.status_code, unknown.data)
+    assert manager.get(base + "/shares").get_json()["shares"] == []
+
+
+@pytest.mark.parametrize("ttl", [None, True, 3599, 604801, "86400"])
+def test_share_requires_bounded_expiry(shared_export, ttl):
+    _, manager, _, base, artifact, _, _ = shared_export
+    assert manager.post(base + f'/exports/{artifact["id"]}/shares', json={"expiry_seconds": ttl}).status_code == 400
+    assert manager.get(base + "/shares").get_json()["shares"] == []
+
+
+def test_share_link_limit_and_expired_slot_recovery(shared_export, monkeypatch):
+    from types import SimpleNamespace
+    _, manager, _, base, artifact, _, shares = shared_export
+    for _ in range(shares.MAX_LINKS):
+        link, _ = mint_share(manager, base, artifact, 3600)
+    assert manager.post(base + f'/exports/{artifact["id"]}/shares', json={"expiry_seconds": 3600}).status_code == 400
+    monkeypatch.setattr(shares, "time", SimpleNamespace(time=lambda: link["expires_at"] + 1))
+    assert len(manager.get(base + "/shares").get_json()["shares"]) == 0
+    mint_share(manager, base, artifact, 3600)
+
+
+def test_pinned_artifact_survives_ttl_regeneration_and_bounded_capacity(shared_export):
+    import os
+    import time
+    server, manager, anonymous, base, artifact, path, shares = shared_export
+    link, token = mint_share(manager, base, artifact, shares.MAX_TTL)
+    original = path.read_bytes()
+    old = time.time() - packs.ARTIFACT_TTL - 10
+    os.utime(path, (old, old))
+    listing = manager.get(base + "/exports").get_json()["exports"]
+    assert listing[0]["pinned_until"] == link["expires_at"]
+    assert listing[0]["active_shares"] == 1
+    fingerprint = manager.get(base).get_json()["fingerprint"]
+    for _ in range(6):
+        generated = manager.post(base + "/exports", json={"fingerprint": fingerprint})
+        assert generated.status_code == 201
+    assert len(manager.get(base + "/exports").get_json()["exports"]) == packs.MAX_ARTIFACTS
+    download = anonymous.post("/api/client-pack-shares/download", json={"token": token})
+    assert download.status_code == 200 and download.data == original
+    download.close()
+    for item in manager.get(base + "/exports").get_json()["exports"]:
+        if item["id"] != artifact["id"]:
+            mint_share(manager, base, item, shares.MAX_TTL)
+    blocked = manager.post(base + "/exports", json={"fingerprint": fingerprint})
+    assert blocked.status_code == 409 and "five archive slots" in blocked.get_json()["error"]
+    assert path.read_bytes() == original
+    assert manager.delete(base + f'/shares/{link["id"]}').status_code == 200
+    assert manager.post(base + "/exports", json={"fingerprint": fingerprint}).status_code == 201
+    assert not path.exists()
+    assert len(packs.artifacts(server)) == packs.MAX_ARTIFACTS
+
+
+def test_delete_shared_archive_requires_confirmation_and_invalidates_links(shared_export):
+    _, manager, anonymous, base, artifact, path, _ = shared_export
+    _, token = mint_share(manager, base, artifact)
+    route = base + f'/exports/{artifact["id"]}'
+    assert manager.delete(route).status_code == 409
+    assert path.exists()
+    assert manager.delete(route, json={"confirm_shared": True}).status_code == 200
+    assert not path.exists()
+    assert anonymous.post("/api/client-pack-shares/download", json={"token": token}).status_code == 404
+    assert manager.get(base + "/shares").get_json()["shares"] == []
+
+
+def test_server_removal_invalidates_share_and_erases_state(shared_export):
+    server, manager, anonymous, base, artifact, _, _ = shared_export
+    _, token = mint_share(manager, base, artifact)
+    storage.delete_server(server["id"])
+    assert anonymous.post("/api/client-pack-shares/download", json={"token": token}).status_code == 404
+    packs.delete_state(server, server["installPath"])
+    assert not packs._directory(server).exists()
+
+
+def test_public_download_rate_limit_does_not_limit_authenticated_apis(shared_export, auth_app):
+    from backend.modrinth.ratelimit import RateLimiter
+    _, manager, anonymous, base, _, _, _ = shared_export
+    auth_app.extensions["client_pack_share_limiter"] = RateLimiter(capacity=1, window_seconds=60, max_wait=0)
+    assert anonymous.post("/api/client-pack-shares/download", json={"token": "bad"}).status_code == 404
+    limited = anonymous.post("/api/client-pack-shares/download", json={"token": "bad"})
+    assert limited.status_code == 429 and int(limited.headers["Retry-After"]) > 0
+    assert manager.get(base + "/exports").status_code == 200
+
+
+@pytest.mark.parametrize("body", [b"", b"[]", b"not-json", b'{"token":12}', b" " * 513])
+def test_invalid_public_download_body_does_not_leak_details(shared_export, body):
+    _, _, anonymous, _, _, _, _ = shared_export
+    response = anonymous.post("/api/client-pack-shares/download", data=body, content_type="application/json")
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "Share link unavailable or expired"}
+
+
+def test_expired_share_unpins_old_archive(shared_export, monkeypatch):
+    import os
+    import time
+    from types import SimpleNamespace
+    _, manager, anonymous, base, artifact, path, shares = shared_export
+    link, token = mint_share(manager, base, artifact, 3600)
+    old = time.time() - packs.ARTIFACT_TTL - 10
+    os.utime(path, (old, old))
+    monkeypatch.setattr(shares, "time", SimpleNamespace(time=lambda: link["expires_at"] + 1))
+    assert manager.get(base + "/exports").get_json()["exports"] == []
+    assert not path.exists()
+    assert anonymous.post("/api/client-pack-shares/download", json={"token": token}).status_code == 404
+
+
+def test_archive_storage_limit_rejects_before_publishing(shared_export, monkeypatch):
+    server, manager, _, base, artifact, path, _ = shared_export
+    monkeypatch.setattr(packs, "MAX_ARTIFACT_BYTES", 32)
+    fingerprint = manager.get(base).get_json()["fingerprint"]
+    response = manager.post(base + "/exports", json={"fingerprint": fingerprint})
+    assert response.status_code == 409 and "storage limit" in response.get_json()["error"]
+    assert path.exists()
+    assert len(packs.artifacts(server)) == 1
+    assert not list(path.parent.glob("*.tmp"))
+
+
+def test_real_http_access_log_never_contains_share_token(shared_export, auth_app, caplog):
+    import threading
+    import requests
+    from werkzeug.serving import make_server
+    _, manager, _, base, artifact, path, _ = shared_export
+    _, token = mint_share(manager, base, artifact)
+    http = make_server("127.0.0.1", 0, auth_app, threaded=True)
+    thread = threading.Thread(target=http.serve_forever, daemon=True)
+    thread.start()
+    try:
+        response = requests.post(f"http://127.0.0.1:{http.server_port}/api/client-pack-shares/download",
+                                 json={"token": token}, timeout=5)
+        assert response.status_code == 200 and response.content == path.read_bytes()
+        assert "POST /api/client-pack-shares/download" in caplog.text
+        assert token not in caplog.text
+    finally:
+        http.shutdown()
+        http.server_close()
+        thread.join(timeout=5)
+
+
 @pytest.mark.parametrize("url", ["http://cdn.modrinth.com/test.jar", "https://evil.example/mod.jar",
                                "https://cdn.modrinth.com/bad file.jar"])
 def test_disallowed_download_hosts_and_urls_fail(pack_server, url):

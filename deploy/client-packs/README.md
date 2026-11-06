@@ -93,18 +93,20 @@ hashes. Provider restrictions are not bypassed. See the
 
 ## Access, storage and freshness
 
-All endpoints are session-authenticated, server-scoped and unavailable to MCP
-API tokens. OIDC custom roles can grant `clientpacks.read`, `clientpacks.manage`,
+Management endpoints are session-authenticated, server-scoped and unavailable to
+MCP API tokens. OIDC custom roles can grant `clientpacks.read`, `clientpacks.manage`,
 `clientpacks.export` and `clientpacks.download` separately, alongside
 `server.view`. The full editor normally needs read + manage; generation needs
 read + export; download-only users see existing snapshots without reading server
 mods/settings. Built-in administrator/password-session behavior is unchanged.
-No anonymous/public share links are created.
+Archives remain private unless a manager explicitly creates a share link.
 
 Configuration, provenance and exports are stored in `client-packs/` alongside
 the configured `servers.json`, not inside the server directory. Provenance is
 bounded to 8 MiB per source and 2,000 indexed files; archives retain at most five
-successful generations per server for 24 hours. Expiration/retention cleanup runs
+successful generations per server for 24 hours unless pinned by a share link.
+Each generated archive is capped at 16 MiB (80 MiB of retained archives per
+server, plus a bounded generation-in-progress). Expiration/retention cleanup runs
 on the next export list, generation or download access. Incomplete archives are
 removed on failure. Downloads have safe generated filenames and private/no-store
 cache headers.
@@ -119,6 +121,57 @@ freshness. Existing snapshots remain valid downloads until expiry. Catalog
 metadata is briefly cached to avoid one upstream request per jar on each review;
 this is not continuous compatibility monitoring. Pinning protects file identity,
 not the future availability of external downloads.
+
+## Optional anonymous share links
+
+After generating a pack, select **Share archive**, choose a lifetime (1 hour,
+24 hours, or 7 days), and select **Create anonymous link**. **Anyone with the
+link can download the entire selected archive, including its client settings**,
+without a password or OIDC account. Review the content first. The link authorizes
+only that immutable archive; it cannot browse the server, export a new pack,
+read other files, or follow later generations.
+
+Creating/listing/revoking links and deleting archives require **both**
+`clientpacks.manage` and `clientpacks.download`, plus `server.view`. OIDC managers
+see and revoke only links they created for that server. Password administrators
+share the existing single-operator identity. The URL is shown only once and held
+only in browser memory; copy it before hiding/leaving the editor. Only its
+SHA-256 hash is persisted, not a recoverable token. Lost links must be revoked
+and replaced. Existing links remain valid until expiry or explicit revocation;
+changing a creator's role does not revoke already-issued bearer grants.
+
+There are at most 20 active links per server, with required expiry between
+3,600 and 604,800 seconds from creation. An active link pins its archive through
+its expiry, even beyond ordinary 24-hour cleanup. Pin counts and the latest
+effective expiry appear beside each archive. The five-archive cap is unchanged:
+generation fails visibly if all five slots are pinned. Revoke links to release
+a slot, wait for expiry, or deliberately delete an archive. Archive deletion
+requires explicit confirmation and invalidates **all** its links, including
+other managers' links. Server deletion also invalidates links. Revocation and
+deletion prevent new downloads; bytes already downloaded or streaming cannot
+be recalled.
+
+Links use a fragment (`/client-pack-share#...`), not a token in the HTTP path or
+query. The minimal download view removes the fragment from browser history and
+POSTs it in a bounded JSON body with cookies omitted. Standard HTTP access logs
+therefore record only the fixed route, not the credential. The view and download
+responses prohibit caching/referrers and the view blocks external scripts and
+connections. No analytics are installed on this view. **Use HTTPS**, retain the
+response headers through your reverse proxy, and disable request/response-body
+capture for share creation and `/api/client-pack-shares/download` in proxies,
+APM, browser extensions and other instrumentation. Those systems can still
+capture secrets if configured to record bodies, fragments or browser state.
+Treat copied links and browser history/sync as credentials; recipients should
+retain their original link if they need to reopen it.
+
+Public downloads have a process-local token bucket (burst 30, refill 30/minute)
+and return `429` with `Retry-After` when exhausted. It is separate from signed-in
+APIs and does not provide a bandwidth quota or distributed abuse protection;
+apply appropriate reverse-proxy connection/bandwidth limits when exposing the
+panel publicly. Unknown, expired, revoked or deleted links return the same
+generic `404`. Setup-mode lockdown remains unchanged. Sharing needs no account
+for recipients, but intentionally disabling authentication still exposes all
+panel management as before.
 
 ## Round-trip regression
 

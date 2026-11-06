@@ -38,7 +38,7 @@ Errors are consistently `{"error": "<message>"}`. Anything under `/api` not list
 ## Client modpack exports
 
 Experimental launcher-importable packs for Fabric, Quilt, Forge and NeoForge.
-Session-authenticated only, unavailable to MCP API tokens. Each OIDC capability
+Management is session-authenticated and unavailable to MCP API tokens. Each OIDC capability
 below also requires `server.view` on the target server. No endpoint installs
 client-only selections onto the server or needs a restart.
 
@@ -50,6 +50,10 @@ client-only selections onto the server or needs a restart.
 | POST | `/client-pack/exports` | `clientpacks.export` | `{ "fingerprint": "<reviewed fingerprint>" }`; `201` immutable artifact metadata |
 | GET | `/client-pack/exports` | `clientpacks.download` | `{ "exports": [...] }`; retained immutable snapshots |
 | GET | `/client-pack/exports/<artifact_id>/download` | `clientpacks.download` | Attachment, MIME `application/x-modrinth-modpack+zip`, private/no-store |
+| GET | `/client-pack/shares` | `clientpacks.manage` + `clientpacks.download` | `{ "shares": [...] }`; caller-owned active grants only |
+| POST | `/client-pack/exports/<artifact_id>/shares` | `clientpacks.manage` + `clientpacks.download` | `{ "expiry_seconds": 86400 }`; `201` grant metadata and one-time relative `url` |
+| DELETE | `/client-pack/shares/<share_id>` | `clientpacks.manage` + `clientpacks.download` | Revoke caller-owned grant; unknown/foreign `404` |
+| DELETE | `/client-pack/exports/<artifact_id>` | `clientpacks.manage` + `clientpacks.download` | Delete archive and its grants; requires `{ "confirm_shared": true }` if shared, otherwise `409` |
 
 Editor configuration example:
 
@@ -79,13 +83,48 @@ artifacts `404`. Modrinth errors preserve rate-limit/retry details.
 
 Artifacts include `id`, `filename`, `created_at` (Unix seconds), `fingerprint`,
 `size`, `file_count` and `override_count`. Up to five snapshots per server are
-kept for 24 hours, swept on artifact access. Compare their fingerprints with a
+kept for 24 hours, swept on artifact access, except that active share grants pin
+their archive through the latest grant expiry. Listing adds `active_shares` and
+`pinned_until` (Unix seconds or null). Each archive is capped at 16 MiB.
+Generation returns `409` with an actionable error if all five slots are pinned.
+Compare their fingerprints with a
 fresh GET review to indicate outdated sources; listing alone does not establish
 freshness. A failed generation never publishes a partial pack.
 
 See the [operator guide](deploy/client-packs/README.md) for dependency behavior,
 old-install reconstruction, override privacy/redistribution limits and launcher
 optional-file caveats.
+
+### Anonymous immutable-archive downloads
+
+Only `POST /api/client-pack-shares/download` is public (outside setup lockdown).
+It takes `{ "token": "<fragment from the share URL>" }` in a JSON body of at most
+512 bytes and returns only the named archive attachment, not server metadata.
+No session or OIDC redirect is needed. It never exports on demand. Unknown,
+expired, revoked, missing-artifact or deleted-server grants share the same
+generic `404` response. A process-local token bucket allows burst 30/refill
+30 per minute, then `429` with `Retry-After`. A busy server/storage returns
+`503`; retry later. MCP bearer-token authentication remains disabled for this
+route, as for all other client-pack endpoints.
+
+Creation requires an explicit integer `expiry_seconds` from 3,600 to 604,800.
+At most 20 active grants may exist per server. Grant metadata is
+`id`, `artifact_id`, `created_at`, `expires_at` (Unix seconds), plus `url` **only
+at creation**. List/revoke operations are creator-owned in OIDC mode and
+server-scoped; the plaintext token and hash are never listed. Deleting an
+archive invalidates all its grants, including other creators' grants, and
+server deletion invalidates every associated link. Already-streaming bytes
+cannot be recalled.
+
+The browser URL is `/client-pack-share#<opaque token>`; it grants exactly one
+fixed artifact and is not a direct launcher download URL. Its view clears the
+fragment/history state, then POSTs without cookies, caching or referrers.
+Tokens never occur in HTTP URLs or ordinary access logs. Use HTTPS and do not
+capture request/response bodies, fragments or one-time URLs in reverse-proxy,
+APM or analytics instrumentation. Download responses set private/no-store,
+no-referrer, nosniff and noindex headers. The public view disallows external
+scripts/connections. Review all selected pack settings before creating links;
+they are intentionally disclosed to anyone holding the link.
 
 ## DNS management
 
@@ -168,10 +207,12 @@ route requires an authenticated session except the ones listed below.
 - **Setup mode** — auth is enabled but no credential exists yet. The app boots locked and only
   serves `POST /api/auth/setup`, `GET /api/auth/status` and `GET /api/health` until a password is set.
 - **Configured** — normal login. Public routes are `POST /api/auth/login`, `GET /api/auth/status`
-  and `GET /api/health`; everything else needs the session cookie.
+  and `GET /api/health`, plus the grant-validated `POST /api/client-pack-shares/download`;
+  everything else needs the session cookie.
 - **OIDC** — one configured provider replaces password login/setup. Public routes
   are `GET /api/auth/oidc/login`, `GET /api/auth/oidc/callback`,
-  `GET /api/auth/status` and `GET /api/health`. Password setup/login/enable/disable/change
+  `GET /api/auth/status`, `GET /api/health` and the grant-validated
+  `POST /api/client-pack-shares/download`. Password setup/login/enable/disable/change
   return `409`. Protected endpoints also require resolved action permissions.
 
 Unauthenticated requests get `401 {"error": "authentication required"}` (or `{"error": "setup required"}`
