@@ -119,3 +119,19 @@ freshness. Existing snapshots remain valid downloads until expiry. Catalog
 metadata is briefly cached to avoid one upstream request per jar on each review;
 this is not continuous compatibility monitoring. Pinning protects file identity,
 not the future availability of external downloads.
+
+## Round-trip regression
+
+Run `.venv/bin/python -m pytest -q tests/test_client_pack.py -k export_download_upload_install_round_trip`
+to exercise export/download, upload/staging and the actual dedicated-server
+importer against isolated fixture downloads. It checks pinned shared jars and
+both hashes, dependency reuse, required/optional client declarations, skipped
+client files, retained settings and client metadata through re-export, and
+rejection of corrupted download bytes. Only upstream catalog/HTTP responses are
+replaced; the export, archive, streaming hash verification and import code run
+normally. No Minecraft process is started.
+
+Fabricator imports packs onto dedicated servers, not desktop clients. This
+round-trip is **not** a launcher-level client installation check: the client
+index, referenced file bytes and override contents are checked independently,
+but no external launcher is run.

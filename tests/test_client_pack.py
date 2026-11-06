@@ -470,6 +470,189 @@ def test_reopened_export_installs_shared_but_not_client_entries(pack_server, mon
     assert len(retained["index"]["files"]) == 2
 
 
+@pytest.mark.parametrize("corrupt_download", [False, True], ids=["round-trip", "reject-corrupt-download"])
+def test_export_download_upload_install_round_trip(client, pack_server, monkeypatch, tmp_path, corrupt_download):
+    from requests import Response
+    from backend.modrinth import client_pack_routes, routes
+    from backend.modrinth.client import ModrinthClient
+
+    server, root, catalog = pack_server
+    monkeypatch.setenv("FABRICATOR_SKIP_JAVA_CHECK", "1")
+
+    def add(project, *, version=None, environment="client_and_server", dependencies=None):
+        contents = io.BytesIO()
+        with zipfile.ZipFile(contents, "w") as jar:
+            jar.writestr("fabric.mod.json", json.dumps({
+                "schemaVersion": 1, "id": project, "version": version or "1.0.0",
+                "environment": "client" if environment == "client_only" else "*",
+                "depends": {"fabricloader": ">=0.16.0", "minecraft": "1.21.1"},
+            }))
+        return catalog.add(project, version=version or project.replace("_", "") + "V1", environment=environment,
+                           dependencies=dependencies, data=contents.getvalue())
+
+    shared_leaf = add("shared_leaf")
+    shared = add("shared", version="sharedPinned", dependencies=[{
+        "version_id": shared_leaf["id"], "project_id": "shared_leaf", "dependency_type": "required",
+    }])
+    install(root, catalog, shared_leaf)
+    install(root, catalog, shared)
+    add("shared", version="sharedLatest")
+    add("client_dep", environment="client_only", dependencies=[{
+        "version_id": shared["id"], "project_id": "shared", "dependency_type": "required",
+    }])
+    add("client_required", environment="client_only", dependencies=[{
+        "version_id": "clientdepV1", "project_id": "client_dep", "dependency_type": "required",
+    }])
+    add("client_optional", environment="client_only")
+    install(root, catalog, add("server_only", environment="server_only"))
+    install(root, catalog, add("disabled"), "disabled.jar.disabled")
+    settings = {"options.txt": b"fov:90\n", "config/sodium-options.json": b'{"quality":2}'}
+    for path, data in settings.items():
+        target = root / path
+        target.parent.mkdir(exist_ok=True)
+        target.write_bytes(data)
+    (root / "server.properties").write_bytes(b"rcon.password=must-not-export")
+    original = {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+
+    importer = ModrinthClient()
+    for name in ("get_version", "get_project", "get_versions_by_hashes", "get_projects",
+                 "get_project_versions", "pick_best_version"):
+        monkeypatch.setattr(importer, name, getattr(catalog, name))
+    payloads = {version["files"][0]["url"]: catalog.bytes[version["id"]]
+                for version in catalog.versions.values()}
+    network = []
+
+    def request(method, url, **kwargs):
+        method = method.lower()
+        assert method in {"get", "head"} and url in payloads, f"Unexpected upstream request: {method} {url}"
+        network.append((method, url))
+        data = payloads[url]
+        if corrupt_download and method == "get":
+            data += b"corrupted"
+        response = Response()
+        response.status_code = 200
+        response.url = url
+        response.raw = io.BytesIO(data)
+        return response
+
+    # Only upstream catalog/HTTP boundaries are replaced. Export, staging,
+    # stream download/hash verification, side filtering and import stay real.
+    monkeypatch.setattr(importer.session, "request", request)
+    monkeypatch.setattr(routes, "modrinth_client", importer)
+    monkeypatch.setattr(client_pack_routes, "modrinth_client", importer)
+    base = f'/api/servers/{server["id"]}/client-pack'
+    config = client.get(base).get_json()["config"]
+    config.update(selections=[
+        {"key": "client:client_required", "version_id": "clientrequiredV1", "requirement": "required"},
+        {"key": "client:client_optional", "version_id": "clientoptionalV1", "requirement": "optional"},
+    ], overrides=[f"server:{path}" for path in settings])
+    saved = client.put(base, json=config)
+    assert saved.status_code == 200, saved.get_json()
+    review = client.get(base).get_json()
+    assert not review["errors"], review["errors"]
+    assert review["file_count"] == 5
+    generated = client.post(base + "/exports", json={"fingerprint": review["fingerprint"]})
+    assert generated.status_code == 201, generated.get_json()
+    artifact = generated.get_json()
+    download = client.get(base + f'/exports/{artifact["id"]}/download')
+    assert download.status_code == 200
+    exported = download.data
+    download.close()
+    artifact_path, _ = packs.artifact_path(server, artifact["id"])
+    assert exported == artifact_path.read_bytes()
+    with zipfile.ZipFile(io.BytesIO(exported)) as zf:
+        index = json.loads(zf.read("modrinth.index.json"))
+        assert_spec(index)
+        assert index["dependencies"] == {"minecraft": "1.21.1", "fabric-loader": "0.16.9"}
+        assert set(zf.namelist()) == {"modrinth.index.json", *(f"client-overrides/{path}" for path in settings)}
+        for path, data in settings.items():
+            assert zf.read(f"client-overrides/{path}") == data
+        # Independently check all client downloads, including optional and
+        # transitive files, without claiming this is a desktop launcher.
+        for file in index["files"]:
+            data = payloads[file["downloads"][0]]
+            assert file["fileSize"] == len(data)
+            for algorithm in ("sha1", "sha512"):
+                assert file["hashes"][algorithm] == hashlib.new(algorithm, data).hexdigest()
+    files = {file["path"]: file for file in index["files"]}
+    assert files["mods/shared.jar"]["hashes"] == shared["files"][0]["hashes"]
+    assert files["mods/client_optional.jar"]["env"] == {"client": "optional", "server": "unsupported"}
+    for name in ("client_required", "client_dep"):
+        assert files[f"mods/{name}.jar"]["env"] == {"client": "required", "server": "unsupported"}
+
+    destination = tmp_path / "servers" / "loopback"
+    destination.mkdir()
+    target_server = storage.create_server({
+        "id": "srv_loopback", "name": "Loopback", "loader": "fabric",
+        "version": "1.21.1", "loaderVersion": "0.16.9", "installPath": str(destination),
+    })
+    staged_response = client.post("/api/modrinth/modpack/upload?filename=loopback.mrpack",
+                                  data=exported, content_type="application/octet-stream")
+    assert staged_response.status_code == 201, staged_response.get_json()
+    staged = staged_response.get_json()
+    assert staged["minecraft_version"] == "1.21.1"
+    assert (staged["loader"], staged["loader_version"], staged["client_only_count"]) == ("fabric", "0.16.9", 3)
+    staged_path = mrpack.get(staged["upload_id"]).path
+    assert staged_path.read_bytes() == exported
+    assert list(destination.iterdir()) == []
+    imported = client.post(f'/api/modrinth/modpack/upload/{staged["upload_id"]}/install', json={
+        "server_id": target_server["id"], "create_backup": False, "clean_install": True,
+    })
+    result = imported.get_json()
+    if corrupt_download:
+        assert imported.status_code == 409, result
+        assert "SHA-512 mismatch" in result["missing_files"][0]["reason"]
+        assert not list(destination.rglob("*.jar"))
+        assert mrpack.get(staged["upload_id"]) is not None
+        assert client.delete(f'/api/modrinth/modpack/upload/{staged["upload_id"]}').status_code == 200
+    else:
+        assert imported.status_code == 200, result
+        assert result["success"] and result["missing_files"] == [] and result["uncertain_mod_files"] == []
+        assert result["dependencies"] == index["dependencies"]
+        assert result["mc_version"] == "1.21.1" and result["loaders"] == ["fabric"]
+        assert result["version"] == index["versionId"]
+        assert set(result["files_installed"]) == {"mods/shared.jar", "mods/shared_leaf.jar"}
+        assert set(result["files_skipped"]) == {
+            "mods/client_required.jar", "mods/client_optional.jar", "mods/client_dep.jar",
+        }
+        assert {str(path.relative_to(destination)) for path in destination.rglob("*") if path.is_file()} == {
+            "mods/shared.jar", "mods/shared_leaf.jar",
+        }
+        for version in (shared, shared_leaf):
+            file = version["files"][0]
+            data = (destination / "mods" / file["filename"]).read_bytes()
+            assert data == catalog.bytes[version["id"]]
+            for algorithm in ("sha1", "sha512"):
+                assert hashlib.new(algorithm, data).hexdigest() == file["hashes"][algorithm]
+        assert {url for method, url in network if method == "get"} == {
+            shared["files"][0]["url"], shared_leaf["files"][0]["url"],
+        }
+        assert mrpack.get(staged["upload_id"]) is None
+        assert not staged_path.exists()
+        assert storage.get_server(target_server["id"])["modpack"]["source"] == "upload"
+        assert packs.source(destination)["index"] == index
+
+        # Client-only overrides must not touch the dedicated server, but their
+        # bytes and skipped client entries must survive import and re-export.
+        target_base = f'/api/servers/{target_server["id"]}/client-pack'
+        config = client.get(target_base).get_json()["config"]
+        config["overrides"] = [f"imported:{path}" for path in settings]
+        assert client.put(target_base, json=config).status_code == 200
+        reviewed = client.get(target_base).get_json()
+        assert not reviewed["errors"], reviewed["errors"]
+        regenerated = client.post(target_base + "/exports", json={"fingerprint": reviewed["fingerprint"]})
+        assert regenerated.status_code == 201, regenerated.get_json()
+        repacked = client.get(target_base + f'/exports/{regenerated.get_json()["id"]}/download')
+        assert repacked.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(repacked.data)) as zf:
+            assert json.loads(zf.read("modrinth.index.json"))["files"] == index["files"]
+            for path, data in settings.items():
+                assert zf.read(f"client-overrides/{path}") == data
+        repacked.close()
+    assert not staged_path.exists()
+    assert original == {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+
+
 @pytest.mark.parametrize("url", ["http://cdn.modrinth.com/test.jar", "https://evil.example/mod.jar",
                                "https://cdn.modrinth.com/bad file.jar"])
 def test_disallowed_download_hosts_and_urls_fail(pack_server, url):
