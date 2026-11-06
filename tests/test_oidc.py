@@ -118,6 +118,30 @@ def test_session_and_grants_are_not_cached_in_cookie(oidc_app):
     assert client.get("/api/auth/status").get_json()["authenticated"] is False
 
 
+def test_modrinth_project_details_allow_mod_readers_without_install(oidc_app, monkeypatch):
+    grants = frozenset({"server.view", "mods.read"})
+    user = permissions.Principal("mod-reader", ISSUER, (), frozenset(), {"a": grants}, {"a": ()})
+    oidc_app.extensions["oidc"].users[user.subject] = user
+    upstream = oidc_app.view_functions["modrinth.get_project"].__globals__["modrinth_client"]
+    calls = []
+    def get_project(project_id):
+        calls.append(project_id)
+        return {"id": project_id, "description": "Short description", "body": "# Full description"}
+    monkeypatch.setattr(upstream, "get_project", get_project)
+    client = oidc_app.test_client()
+    sign_in(client, user.subject)
+    for route in ["project", "mod"]:
+        response = client.get(f"/api/modrinth/{route}/known")
+        assert response.status_code == 200
+        assert response.json["body"] == "# Full description"
+        assert response.json["description"] == "Short description"
+    assert calls == ["known", "known"]
+    assert client.post("/api/modrinth/mod/known/install", json={"server_id": "a"}).status_code == 403
+    sign_in(client, "bob")
+    assert client.get("/api/modrinth/project/known").status_code == 403
+    assert calls == ["known", "known"]
+
+
 def test_route_permission_coverage(oidc_app):
     exceptions = {
         ("GET", "/api/health"), ("GET", "/api/auth/status"), ("POST", "/api/auth/logout"),

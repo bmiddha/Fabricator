@@ -37,7 +37,7 @@
 | | Feature | Status |
 |---|---|---|
 | 🧩 | **Loaders**: Fabric, Quilt, NeoForge, Forge, Paper, Purpur, Folia, Pufferfish, Vanilla | ✅ Available |
-| 📦 | **Mod & plugin management**: install, remove, enable/disable, and browse Modrinth mods and plugins; update checks with missing-dependency detection | ✅ Available |
+| 📦 | **Mod & plugin management**: install, remove, enable/disable, and browse Modrinth mods and plugins; preview project descriptions from search or installed files; update checks with missing-dependency detection | ✅ Available |
 | 🧰 | **Modpack import**: find popular Modrinth packs, search by name or link, or upload an exported `.mrpack` | ✅ Available |
 | 📋 | **Logs & monitoring**: live log stream, TPS and RAM graphs | ✅ Available |
 | 📁 | **File explorer & editor**: browse the server tree, search files, and edit configuration files in the panel | ✅ Available |
@@ -66,6 +66,16 @@
 ---
 
 ## Screenshots
+
+Use **Details** on a search result or installed mod/plugin to read its Modrinth
+short description and full Markdown project body without leaving the panel.
+Details load only when opened and are also available with `mods.read` access
+(installation rights are not required). Installed files are identified through
+their install record or content hash, including disabled files; unidentified
+files show an unavailable state instead of guessing a project from the name.
+Raw HTML in descriptions is displayed as text, and links open safely in a new tab.
+Relative Markdown links and images resolve against `https://modrinth.com/`;
+no separate repository README is fetched.
 
 <table>
   <tr>

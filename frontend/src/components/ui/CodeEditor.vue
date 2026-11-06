@@ -4,19 +4,15 @@ import { EditorView, keymap } from '@codemirror/view'
 import { EditorState, Compartment, Prec } from '@codemirror/state'
 import { basicSetup } from 'codemirror'
 import {
-  StreamLanguage,
   syntaxTree,
   ensureSyntaxTree,
   HighlightStyle,
   syntaxHighlighting,
 } from '@codemirror/language'
 import { linter, forceLinting } from '@codemirror/lint'
-import { json, jsonParseLinter } from '@codemirror/lang-json'
-import { yaml } from '@codemirror/lang-yaml'
-import { properties } from '@codemirror/legacy-modes/mode/properties'
-import { toml } from '@codemirror/legacy-modes/mode/toml'
 import { tags as t } from '@lezer/highlight'
 import { i18n } from '../../i18n'
+import { languageForPath, parserLinterForPath } from '../../utils/editorFiles'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -31,28 +27,6 @@ let view = null
 
 const languageCompartment = new Compartment()
 const editableCompartment = new Compartment()
-
-// ---------- Language selection ----------
-// Extension → CodeMirror language extension. Mirrors TEXT_FILE_EXTENSIONS in the
-// server store; anything unmapped (txt, log, md, …) renders as plaintext.
-function languageForPath(path) {
-  const ext = (path || '').toLowerCase().split('.').pop() || ''
-  switch (ext) {
-    case 'json':
-      return json()
-    case 'yml':
-    case 'yaml':
-      return yaml()
-    case 'properties':
-    case 'cfg':
-    case 'conf':
-      return StreamLanguage.define(properties)
-    case 'toml':
-      return StreamLanguage.define(toml)
-    default:
-      return []
-  }
-}
 
 // ---------- Theme ----------
 // Maps CodeMirror surfaces onto the app's CSS variables (see assets/global.css)
@@ -138,14 +112,12 @@ function syntaxTreeLinter(vw) {
   return diagnostics
 }
 
-const jsonLinter = jsonParseLinter()
-
 // Shared diagnostic computation so the lint gutter and the on-demand save-time
-// check can never disagree. JSON has a dedicated linter with precise messages;
+// check can never disagree. JSON/JSON5 have dedicated linters with precise messages;
 // everything else with a syntax tree (YAML, …) uses the generic error walk.
 function computeDiagnostics(vw) {
-  const ext = (props.path || '').toLowerCase().split('.').pop() || ''
-  return ext === 'json' ? jsonLinter(vw) : syntaxTreeLinter(vw)
+  const parserLinter = parserLinterForPath(props.path)
+  return parserLinter ? parserLinter(vw) : syntaxTreeLinter(vw)
 }
 
 function combinedLinter(vw) {

@@ -57,6 +57,92 @@ def _upload(client, body: bytes, *, name: str, path: str = "", overwrite: bool =
 
 
 # ---------------------------------------------------------------------------
+# Text editing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("name", "original", "edited"),
+    [
+        (
+            "mod.json5",
+            "{\n  // Keep this comment\n  unquoted: 'old',\n}\n",
+            "{\n  // Keep this comment\n  unquoted: 'caf\u00e9',\n"
+            "  /* Keep block comments too. */\n  values: [0x10, +2, .5,],\n}\n",
+        ),
+        ("Mod.JSON5", "{enabled: true,}", "{enabled: false, /* keep me */}\n"),
+        ("mod.json", '{ "enabled": true }\n', '{ "enabled": false, "values": [1, 2] }\n'),
+    ],
+)
+def test_text_file_browse_search_open_and_save_preserves_content(
+    client, seeded, name, original, edited,
+):
+    config = seeded / "config"
+    config.mkdir()
+    target = config / name
+    target.write_text(original, encoding="utf-8")
+    path = str(Path("config") / name)
+
+    listing = client.get("/api/servers/srv1/files?path=config")
+    assert listing.status_code == 200
+    assert listing.get_json()["entries"][0]["relativePath"] == path
+    search = client.get(f"/api/servers/srv1/files/search?q={name}")
+    assert search.status_code == 200
+    assert search.get_json()["results"][0]["relativePath"] == path
+
+    endpoint = "/api/servers/srv1/files/content"
+    opened = client.get(endpoint, query_string={"path": path})
+    assert opened.status_code == 200
+    assert opened.get_json() == {"path": path, "content": original}
+    saved = client.put(endpoint, json={"path": path, "content": edited})
+    assert saved.status_code == 200
+    assert saved.get_json() == {"success": True}
+    assert target.read_bytes() == edited.encode("utf-8")
+    reopened = client.get(endpoint, query_string={"path": path})
+    assert reopened.get_json()["content"] == edited
+
+
+@pytest.mark.parametrize("extension", ["json", "json5"])
+@pytest.mark.parametrize("method", ["GET", "PUT"])
+def test_text_editor_rejects_traversal_and_external_symlinks(
+    client, seeded, extension, method,
+):
+    outside = seeded.parent / f"outside.{extension}"
+    outside.write_text("keep me", encoding="utf-8")
+    (seeded / f"link.{extension}").symlink_to(outside)
+    endpoint = "/api/servers/srv1/files/content"
+    for path in [f"../outside.{extension}", f"link.{extension}"]:
+        response = (
+            client.get(endpoint, query_string={"path": path})
+            if method == "GET"
+            else client.put(endpoint, json={"path": path, "content": "clobber"})
+        )
+        assert response.status_code == 400
+    assert outside.read_text(encoding="utf-8") == "keep me"
+
+
+@pytest.mark.parametrize("method", ["GET", "PUT"])
+def test_json5_editing_requires_authentication(auth_client, seeded, method):
+    target = seeded / "mod.json5"
+    target.write_text("{enabled: true,}", encoding="utf-8")
+    endpoint = "/api/servers/srv1/files/content"
+    response = (
+        auth_client.get(endpoint, query_string={"path": "mod.json5"})
+        if method == "GET"
+        else auth_client.put(endpoint, json={"path": "mod.json5", "content": "{}"})
+    )
+    assert response.status_code == 401
+    assert target.read_text(encoding="utf-8") == "{enabled: true,}"
+
+
+def test_json5_open_still_requires_utf8_text(client, seeded):
+    (seeded / "mod.json5").write_bytes(b"\xff\x00")
+    response = client.get("/api/servers/srv1/files/content?path=mod.json5")
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "File is not UTF-8 text"
+
+
+# ---------------------------------------------------------------------------
 # Upload
 # ---------------------------------------------------------------------------
 

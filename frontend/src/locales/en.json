@@ -1,4 +1,21 @@
 {
+  "modPreview": {
+    "title": "Project details",
+    "details": "Details",
+    "loading": "Loading project details from Modrinth...",
+    "failed": "Could not load project details from Modrinth.",
+    "retry": "Retry",
+    "unidentified": "No Modrinth project is identified for this file. Details are unavailable for unrecognized or unpublished files.",
+    "empty": "This project has no full description on Modrinth.",
+    "about": "About this project",
+    "links": "Project links (open in a new tab)",
+    "modrinth": "Modrinth",
+    "source": "Source code",
+    "issues": "Issues",
+    "wiki": "Wiki",
+    "community": "Community",
+    "license": "License: {name}"
+  },
   "access": {
     "settingsReadOnly": "Your role does not allow reading and editing server settings. Other granted actions remain available.",
     "oidcSubtitle": "Sign in with your identity provider to access Fabricator.",

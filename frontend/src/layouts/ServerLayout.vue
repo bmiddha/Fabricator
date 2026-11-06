@@ -199,7 +199,7 @@ onUnmounted(() => {
 
     <!-- Modals (hosted at layout level so they survive route changes) -->
     <ModBrowserModal
-      v-if="auth.can('mods.install', route.params.id)"
+      v-if="auth.can('mods.read', route.params.id) || auth.can('mods.install', route.params.id)"
       :show="store.showModBrowser"
       :mc-version="store.server?.version || store.serverStatus.version"
       :loader="(store.server?.loader || store.serverStatus.loader).toLowerCase()"

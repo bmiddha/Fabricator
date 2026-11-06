@@ -1,11 +1,12 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, defineAsyncComponent, ref } from 'vue'
 import AppButton from '../../components/ui/AppButton.vue'
 import Panel from '../../components/ui/Panel.vue'
 import SearchResultCard from '../../components/ui/SearchResultCard.vue'
 import { formatFileSize } from '../../utils/format'
 import { installedModDisplayName } from '../../utils/installedModDisplay'
 import { modrinthProjectUrl } from '../../utils/modrinthUrl'
+import { installedProjectId } from '../../utils/modProjectPreview'
 import { useServerStore } from '../../stores/server'
 import { isPluginLoader } from '../../utils/loaderKind'
 import { t } from '../../i18n'
@@ -13,6 +14,8 @@ import { useCapabilities } from '../../composables/useCapabilities'
 
 const store = useServerStore()
 const can = useCapabilities()
+const ModProjectPreview = defineAsyncComponent(() => import('../../components/modals/ModProjectPreview.vue'))
+const previewMod = ref(null)
 
 const onSearch = (event) => { store.modSearch = event.target.value }
 
@@ -74,7 +77,7 @@ const selectAllLabel = computed(() => {
         </AppButton>
         <AppButton v-if="!isPlugin && can('modpacks.install')" variant="ghost" @click="store.openModpackBrowser">{{ $t('mods.browseModpacks') }}</AppButton>
         <AppButton
-          v-if="can('mods.install')"
+          v-if="can('mods.read') || can('mods.install')"
           variant="primary"
           :loading="store.isInstalling"
           @click="store.openModBrowser"
@@ -217,6 +220,14 @@ const selectAllLabel = computed(() => {
             </label>
           </template>
           <div class="mods-page__item-actions">
+            <AppButton
+              variant="ghost"
+              size="sm"
+              :title="installedProjectId(mod) ? $t('modPreview.details') : $t('modPreview.unidentified')"
+              @click="previewMod = mod"
+            >
+              {{ $t('modPreview.details') }}
+            </AppButton>
             <a
               v-if="modrinthProjectUrl(mod)"
               class="mods-page__modrinth-link"
@@ -248,6 +259,13 @@ const selectAllLabel = computed(() => {
       </div>
 
     </Panel>
+    <ModProjectPreview
+      v-if="previewMod"
+      :show="!!previewMod"
+      :project-id="installedProjectId(previewMod)"
+      :title="previewMod ? installedModDisplayName(previewMod) : ''"
+      @close="previewMod = null"
+    />
   </div>
 </template>
 
