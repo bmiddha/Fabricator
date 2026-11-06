@@ -82,9 +82,12 @@
         :title="mod.title"
         :description="truncate(mod.description, 100)"
         :meta="formatModMeta(mod)"
-        @click="selectMod(mod)"
       >
+        <AppButton variant="ghost" size="sm" @click.stop="selectMod(mod)">
+          {{ $t('modPreview.details') }}
+        </AppButton>
         <AppButton
+          v-if="canInstall"
           :variant="isModInstalled(mod) ? 'ghost' : getInstallButtonVariant(mod)"
           size="sm"
           :disabled="isModInstalled(mod)"
@@ -122,6 +125,15 @@
     </template>
   </BaseModal>
 
+  <ModProjectPreview
+    v-if="previewMod"
+    :show="show && !!previewMod"
+    :lock-scroll="false"
+    :project-id="previewMod?.project_id"
+    :title="previewMod?.title"
+    @close="previewMod = null"
+  />
+
   <CompatibilityConfirmModal
     :show="showCompatibilityModal"
     :mod-title="pendingMod ? pendingMod.title : ''"
@@ -145,6 +157,7 @@
 </template>
 
 <script>
+import { defineAsyncComponent } from 'vue'
 import BaseModal from './BaseModal.vue'
 import CompatibilityConfirmModal from './CompatibilityConfirmModal.vue'
 import ModDependencyModal from './ModDependencyModal.vue'
@@ -166,6 +179,7 @@ export default {
   name: 'ModBrowserModal',
   components: {
     BaseModal,
+    ModProjectPreview: defineAsyncComponent(() => import('./ModProjectPreview.vue')),
     CompatibilityConfirmModal,
     ModDependencyModal,
     SearchResultCard,
@@ -189,6 +203,7 @@ export default {
   data() {
     return {
       searchQuery: '',
+      previewMod: null,
       selectedLoader: (this.loader || 'fabric').toLowerCase(),
       selectedVersion: this.mcVersion || '',
       sortBy: 'relevance',
@@ -208,6 +223,9 @@ export default {
     };
   },
   computed: {
+    canInstall() {
+      return useAuthStore().can('mods.install', useServerStore().currentServerId)
+    },
     // Add-on vocabulary derived from the loader (Mods vs Plugins).
     projectType() {
       return loaderProjectType(this.loader)
@@ -439,7 +457,7 @@ export default {
     },
 
     async installMod(mod) {
-      if (this.isModInstalled(mod)) {
+      if (!this.canInstall || this.isModInstalled(mod)) {
         return
       }
       const status = this.getCompatibilityStatus(mod)
@@ -534,8 +552,8 @@ export default {
       this.performInstall(ctx.mod, ctx.mcVersion, ctx.missing)
     },
 
-    selectMod(_mod) {
-      // Future: Open mod details view
+    selectMod(mod) {
+      this.previewMod = mod
     },
 
     truncate,
@@ -644,6 +662,7 @@ export default {
     show(newVal) {
       if (!newVal) {
         // Reset on close
+        this.previewMod = null;
         this.searchQuery = '';
         this.results = [];
         this.versionFilterExpanded = false;

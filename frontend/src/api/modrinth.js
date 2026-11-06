@@ -89,8 +89,8 @@ export async function searchModpacks({
   })
 }
 
-export async function getProjectDetails(projectIdOrSlug) {
-  return get(`/api/modrinth/project/${encodeURIComponent(projectIdOrSlug)}`)
+export async function getProjectDetails(projectIdOrSlug, options = {}) {
+  return get(`/api/modrinth/project/${encodeURIComponent(projectIdOrSlug)}`, {}, { signal: options.signal })
 }
 
 /**
