@@ -1,8 +1,8 @@
 # Fabricator — API Documentation
 
 REST API reference for the Fabricator Minecraft server manager. Every endpoint lives under `/api`
-and returns JSON, with two deliberate exceptions: snapshot download streams a binary archive
-attachment, and world import takes raw archive bytes as its request body. Unknown `/api/...` paths
+and normally returns JSON. Snapshot/client-pack downloads stream binary archive
+attachments; world/modpack imports take raw archive bytes as their request bodies. Unknown `/api/...` paths
 return `404 {"error": "endpoint not found", "path": ...}` rather than the SPA's HTML.
 
 Errors are consistently `{"error": "<message>"}`. Anything under `/api` not listed as public in
@@ -16,6 +16,7 @@ Errors are consistently `{"error": "<message>"}`. Anything under `/api` not list
 - [DNS management](#dns-management)
 - [Server files](#server-files)
 - [Mods](#mods)
+- [Client modpack exports](#client-modpack-exports)
 - [Console & metrics](#console--metrics)
 - [Loader versions](#loader-versions)
 - [Java management](#java-management)
@@ -33,6 +34,58 @@ Errors are consistently `{"error": "<message>"}`. Anything under `/api` not list
 - [Security notes](#security-notes)
 
 ---
+
+## Client modpack exports
+
+Experimental launcher-importable packs for Fabric, Quilt, Forge and NeoForge.
+Session-authenticated only, unavailable to MCP API tokens. Each OIDC capability
+below also requires `server.view` on the target server. No endpoint installs
+client-only selections onto the server or needs a restart.
+
+| Method | Path (prefix `/api/servers/<server_id>`) | Capability | Response / request |
+|---|---|---|---|
+| GET | `/client-pack` | `clientpacks.read` | Current `config`, effective `entries`, pinned `files`, `dependencies`, `errors`, `warnings`, `fingerprint`, counts, override candidates and excluded imported paths |
+| PUT | `/client-pack` | `clientpacks.manage` | Replace editor configuration using its current `revision`; returns new `config` |
+| POST | `/client-pack/import` | `clientpacks.manage` | Raw `.mrpack` body, max 64 MiB; replace retained client metadata only |
+| POST | `/client-pack/exports` | `clientpacks.export` | `{ "fingerprint": "<reviewed fingerprint>" }`; `201` immutable artifact metadata |
+| GET | `/client-pack/exports` | `clientpacks.download` | `{ "exports": [...] }`; retained immutable snapshots |
+| GET | `/client-pack/exports/<artifact_id>/download` | `clientpacks.download` | Attachment, MIME `application/x-modrinth-modpack+zip`, private/no-store |
+
+Editor configuration example:
+
+```json
+{
+  "revision": "<revision from GET>",
+  "name": "Friends client pack",
+  "loader_version": "0.16.9",
+  "selections": [
+    { "key": "client:AANobbMI", "version_id": "<exact Modrinth version ID>", "requirement": "optional" },
+    { "key": "server:mods/local.jar", "requirement": "excluded" }
+  ],
+  "overrides": ["imported:config/sodium-options.json"]
+}
+```
+
+Keys identify a server file, an imported file (`imported:mods/example.jar`), a
+client project (`client:<project_id>`) or an excluded bundled override
+(`imported-override:client-overrides/mods/custom.jar`). Requirements are
+`required`, `optional`, `excluded`; client selections must name a matching
+exact version. Server/shared versions cannot be replaced by client selections.
+Use only advertised allowlisted override candidates. Saving selections does
+not make them valid: GET exposes errors, and generation refuses any error.
+Stale editor revisions and changed export sources return `409`; malformed
+configuration/imports return `400`; oversized uploads `413`; expired/foreign
+artifacts `404`. Modrinth errors preserve rate-limit/retry details.
+
+Artifacts include `id`, `filename`, `created_at` (Unix seconds), `fingerprint`,
+`size`, `file_count` and `override_count`. Up to five snapshots per server are
+kept for 24 hours, swept on artifact access. Compare their fingerprints with a
+fresh GET review to indicate outdated sources; listing alone does not establish
+freshness. A failed generation never publishes a partial pack.
+
+See the [operator guide](deploy/client-packs/README.md) for dependency behavior,
+old-install reconstruction, override privacy/redistribution limits and launcher
+optional-file caveats.
 
 ## DNS management
 

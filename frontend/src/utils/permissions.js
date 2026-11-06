@@ -3,7 +3,7 @@ export const ROUTE_PERMISSIONS = {
   ServerOverview: ['server.view'],
   ServerConsole: ['server.logs.read', 'server.console.execute'],
   ServerPlayers: ['players.read', 'players.kick', 'players.bans.manage', 'players.ops.manage', 'players.whitelist.manage', 'players.known.delete'],
-  ServerMods: ['mods.read', 'mods.install', 'modpacks.install'],
+  ServerMods: ['mods.read', 'mods.install', 'modpacks.install', 'clientpacks.read', 'clientpacks.manage', 'clientpacks.export', 'clientpacks.download'],
   ServerFiles: ['files.list', 'files.read', 'files.write', 'files.upload', 'files.delete', 'files.create_directory'],
   ServerBackups: ['backups.list', 'backups.create', 'backups.config.read', 'backups.config.write', 'worlds.import'],
   ServerSchedules: ['schedules.read', 'schedules.create'],

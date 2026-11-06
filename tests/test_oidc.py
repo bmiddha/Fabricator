@@ -142,6 +142,27 @@ def test_modrinth_project_details_allow_mod_readers_without_install(oidc_app, mo
     assert calls == ["known", "known"]
 
 
+@pytest.mark.parametrize("method,suffix,permission", [
+    ("get", "", "clientpacks.read"),
+    ("put", "", "clientpacks.manage"),
+    ("post", "/import", "clientpacks.manage"),
+    ("post", "/exports", "clientpacks.export"),
+    ("get", "/exports", "clientpacks.download"),
+    ("get", "/exports/" + "a" * 32 + "/download", "clientpacks.download"),
+])
+def test_client_pack_permissions_are_separate_and_server_scoped(oidc_app, method, suffix, permission):
+    client = oidc_app.test_client()
+    user = permissions.Principal(
+        "pack-reader", ISSUER, (), frozenset(),
+        {"a": frozenset({"server.view", "clientpacks.read"})}, {"a": ()},
+    )
+    oidc_app.extensions["oidc"].users[user.subject] = user
+    sign_in(client, user.subject)
+    response = getattr(client, method)("/api/servers/a/client-pack" + suffix)
+    assert response.status_code == (404 if permission == "clientpacks.read" else 403)
+    assert getattr(client, method)("/api/servers/b/client-pack" + suffix).status_code == 404
+
+
 def test_route_permission_coverage(oidc_app):
     exceptions = {
         ("GET", "/api/health"), ("GET", "/api/auth/status"), ("POST", "/api/auth/logout"),

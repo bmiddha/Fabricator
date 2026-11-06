@@ -686,6 +686,8 @@ class ModrinthClient:
         install_path = Path(install_path).resolve()
         normalized_overrides = self._normalize_mod_side_overrides(mod_side_overrides)
         cleaned_paths: List[str] = []
+        from backend.modrinth.client_pack import prepare_source, store_source
+        client_metadata = prepare_source(mrpack_path)
 
         with zipfile.ZipFile(mrpack_path, "r") as zf:
             with zf.open("modrinth.index.json") as fh:
@@ -739,6 +741,11 @@ class ModrinthClient:
         )
 
         dependencies = index.get("dependencies") or {}
+        store_source(
+            client_metadata, install_path,
+            server_files=result["files_installed"],
+            side_overrides=normalized_overrides,
+        )
         return {
             "version": index.get("versionId"),
             "name": index.get("name"),

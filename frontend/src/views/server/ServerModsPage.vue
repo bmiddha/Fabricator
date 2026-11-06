@@ -11,6 +11,7 @@ import { useServerStore } from '../../stores/server'
 import { isPluginLoader } from '../../utils/loaderKind'
 import { t } from '../../i18n'
 import { useCapabilities } from '../../composables/useCapabilities'
+import ClientPackPanel from '../../components/ClientPackPanel.vue'
 
 const store = useServerStore()
 const can = useCapabilities()
@@ -134,6 +135,13 @@ const selectAllLabel = computed(() => {
         </a>
       </div>
     </Panel>
+
+    <ClientPackPanel
+      v-if="store.server && ['clientpacks.read', 'clientpacks.manage', 'clientpacks.export', 'clientpacks.download'].some(permission => can(permission))"
+      :key="store.currentServerId"
+      :server-id="store.currentServerId"
+      :server="store.server"
+    />
 
     <Panel v-if="can('mods.read')" :title="tk('mods.installedMods', 'mods.installedPlugins')" :padded="false">
       <!-- Selection toolbar. Present whenever there is a list to act on, so the

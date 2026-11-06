@@ -351,6 +351,7 @@ class QuiltInstaller(InstallerBase):
             server_jar=launch_jar,
             details={
                 "mc_version": mc_version,
+                "loader_version": loader_version,
                 "installer_version": installer_version,
                 "launch_jar": str(launch_jar),
                 "install_path": str(self.install_path),

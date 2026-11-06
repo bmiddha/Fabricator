@@ -26,6 +26,7 @@ Two caches keep repeat loads free:
 from __future__ import annotations
 
 import hashlib
+import copy
 import logging
 import threading
 import time
@@ -56,6 +57,7 @@ _file_hash_cache: Dict[Tuple[str, int, int], str] = {}
 _hash_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 # project id -> (expires_at, {"title", "icon_url", "slug"})
 _project_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_version_details_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 
 
 def clear_caches() -> None:
@@ -64,6 +66,7 @@ def clear_caches() -> None:
         _file_hash_cache.clear()
         _hash_cache.clear()
         _project_cache.clear()
+        _version_details_cache.clear()
 
 
 def _trim(cache: dict, limit: int) -> None:
@@ -136,8 +139,26 @@ def _store_versions(requested: List[str], found: Dict[str, Dict[str, Any]]) -> D
             }
             _hash_cache[digest] = entry
             positives[digest] = entry
+            if version.get("id") and isinstance(version.get("files"), list):
+                _version_details_cache[version["id"]] = (
+                    time.monotonic() + 15 * 60, copy.deepcopy(version),
+                )
+                _trim(_version_details_cache, _MAX_HASH_LOOKUPS)
         _trim(_hash_cache, _MAX_HASH_LOOKUPS)
     return positives
+
+
+def version_details(client, version_id: str) -> Dict[str, Any]:
+    """Reuse complete hash-lookup payloads instead of one GET per installed mod."""
+    with _lock:
+        cached = _version_details_cache.get(version_id)
+        if cached and cached[0] > time.monotonic():
+            return copy.deepcopy(cached[1])
+    value = client.get_version(version_id)
+    with _lock:
+        _version_details_cache[version_id] = (time.monotonic() + 15 * 60, copy.deepcopy(value))
+        _trim(_version_details_cache, _MAX_HASH_LOOKUPS)
+    return value
 
 
 def _cached_projects(project_ids: List[str]) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
@@ -166,6 +187,7 @@ def _store_projects(projects: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]
                 "title": project.get("title"),
                 "icon_url": project.get("icon_url"),
                 "slug": project.get("slug"),
+                "project_type": project.get("project_type"),
                 # Side metadata, carried so the installer can ask Modrinth
                 # what a jar actually is instead of guessing from its bytes
                 # (see modrinth/environment.py). ``environment`` is the

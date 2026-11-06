@@ -66,7 +66,7 @@ def test_install_writes_launch_to_storage(client, tmp_servers_root):
         success=True,
         status=InstallStatus.COMPLETED,
         message="ok",
-        details={"mc_version": "1.21.4"},
+        details={"mc_version": "1.21.4", "loader_version": "0.16.9"},
         launch=LaunchSpec(
             type="jar",
             jar="server.jar",
@@ -89,6 +89,7 @@ def test_install_writes_launch_to_storage(client, tmp_servers_root):
 
     from backend.server import storage
     persisted = storage.get_server(server_id)
+    assert persisted["loaderVersion"] == "0.16.9"
     assert persisted["launch"] == {
         "type": "jar",
         "jar": "server.jar",

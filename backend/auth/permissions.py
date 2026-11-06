@@ -56,6 +56,12 @@ for method, suffix, permission in [
     ("POST", "/files/folder", "files.create_directory"),
     ("DELETE", "/files", "files.delete"),
     ("GET", "/mods", "mods.read"),
+    ("GET", "/client-pack", "clientpacks.read"),
+    ("PUT", "/client-pack", "clientpacks.manage"),
+    ("POST", "/client-pack/import", "clientpacks.manage"),
+    ("POST", "/client-pack/exports", "clientpacks.export"),
+    ("GET", "/client-pack/exports", "clientpacks.download"),
+    ("GET", "/client-pack/exports/<artifact_id>/download", "clientpacks.download"),
     ("DELETE", "/mods", "mods.delete"),
     ("DELETE", "/mods/<path:filename>", "mods.delete"),
     ("PATCH", "/mods", "mods.toggle"),
@@ -283,7 +289,7 @@ def authorize(user: Principal):
         return None if any(user.can(p) for p in ("tokens.self.manage", "tokens.all.manage", "mcp.configure")) else _deny()
     if target in {"catalog", "any-server"}:
         options = required or (
-            "mods.read", "mods.install", "modpacks.install", "server.install",
+            "mods.read", "mods.install", "modpacks.install", "clientpacks.read", "clientpacks.manage", "server.install",
             "server.upgrade", "servers.create",
         )
         if any(user.can(p) for p in options):

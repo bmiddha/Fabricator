@@ -80,6 +80,12 @@ _MANAGE = [
 
 # --- NEVER: no token, either scope ------------------------------------------ #
 _NEVER = [
+    ("GET", "/api/servers/<server_id>/client-pack"),
+    ("PUT", "/api/servers/<server_id>/client-pack"),
+    ("POST", "/api/servers/<server_id>/client-pack/import"),
+    ("POST", "/api/servers/<server_id>/client-pack/exports"),
+    ("GET", "/api/servers/<server_id>/client-pack/exports"),
+    ("GET", "/api/servers/<server_id>/client-pack/exports/<artifact_id>/download"),
     ("GET", "/api/auth/oidc/login"),
     ("GET", "/api/auth/oidc/callback"),
     ("GET", "/api/servers/<server_id>/velocity/config"),

@@ -44,6 +44,7 @@ const { useAuthStore } = await vite.ssrLoadModule('/src/stores/auth.js')
 const Preview = (await vite.ssrLoadModule('/src/components/modals/ModProjectPreview.vue')).default
 const Browser = (await vite.ssrLoadModule('/src/components/modals/ModBrowserModal.vue')).default
 const Installed = (await vite.ssrLoadModule('/src/views/server/ServerModsPage.vue')).default
+const ClientPack = (await vite.ssrLoadModule('/src/components/ClientPackPanel.vue')).default
 const apps = []
 const originalFetch = globalThis.fetch
 after(async () => { await vite.close(); dom.window.close() })
@@ -80,6 +81,121 @@ function mount(Component, props = {}, permissions = ['mods.read', 'server.view']
   apps.push(app)
   return { ...stores, root, vm: wrapper.$refs.child }
 }
+
+function clientPlan(overrides = {}) {
+  return {
+    config: { revision: 'one', name: 'Client pack', loader_version: '0.16.9', selections: [], overrides: [] },
+    entries: [], errors: [], warnings: [], files: [],
+    override_candidates: [], excluded_imported_overrides: [],
+    fingerprint: 'reviewed', file_count: 0, override_count: 0,
+    ...overrides,
+  }
+}
+
+test('client pack download-only access never fetches server mod metadata or exposes edits', async () => {
+  const calls = []
+  globalThis.fetch = async (url) => {
+    calls.push(url)
+    return Response.json({ exports: [{
+      id: 'one', filename: 'client-pack.mrpack', created_at: 1700000000, size: 100,
+    }] })
+  }
+  const { root } = mount(ClientPack, { serverId: 'preview', server: { loader: 'fabric' } }, ['server.view', 'clientpacks.download'])
+  assert.equal(calls.length, 0)
+  button('Open client pack', root).click()
+  await settle()
+  assert.deepEqual(calls, ['/api/servers/preview/client-pack/exports'])
+  assert.equal(button('Generate .mrpack', root), undefined)
+  assert.equal(button('Save and review', root), undefined)
+  assert.equal(root.querySelector('a').getAttribute('href'), '/api/servers/preview/client-pack/exports/one/download')
+  assert.match(root.textContent, /freshness has not been checked/)
+})
+
+test('client pack blocks generation on errors, saves explicit exclusions and marks old snapshots', async () => {
+  let saved
+  let current = clientPlan({
+    errors: ['Unknown jar needs explicit exclusion'],
+    entries: [{ key: 'server:mods/unknown.jar', title: 'unknown.jar', origin: 'server', requirement: 'required' }],
+  })
+  globalThis.fetch = async (url, options) => {
+    if (options?.method === 'PUT') {
+      saved = JSON.parse(options.body)
+      current = clientPlan({ config: { ...saved, revision: 'two' } })
+      return Response.json({ config: current.config })
+    }
+    if (url.endsWith('/exports')) return Response.json({ exports: [{
+      id: 'old', filename: 'old.mrpack', fingerprint: 'old', created_at: 1700000000, size: 100,
+    }] })
+    return Response.json(current)
+  }
+  const { root } = mount(ClientPack, { serverId: 'preview', server: { loader: 'fabric' } },
+    ['server.view', 'clientpacks.read', 'clientpacks.manage', 'clientpacks.export', 'clientpacks.download'])
+  button('Open client pack', root).click()
+  await settle()
+  assert.equal(button('Generate .mrpack', root).disabled, true)
+  assert.match(root.textContent, /Unknown jar needs explicit exclusion/)
+  assert.match(root.textContent, /Outdated/)
+  const select = root.querySelector('select')
+  select.value = 'excluded'
+  select.dispatchEvent(new window.Event('change', { bubbles: true }))
+  await settle()
+  assert.equal(button('Refresh sources', root).disabled, true)
+  button('Save and review', root).click()
+  await settle()
+  assert.deepEqual(saved.selections, [{ key: 'server:mods/unknown.jar', requirement: 'excluded', version_id: '' }])
+  assert.equal(button('Generate .mrpack', root).disabled, false)
+})
+
+test('client-only search pins chosen version in metadata without any install request', async () => {
+  const calls = []
+  let saved
+  let current = clientPlan()
+  globalThis.fetch = async (url, options) => {
+    calls.push(url)
+    if (url.includes('/search?')) return Response.json({ hits: [{ project_id: 'sodium', title: 'Sodium' }] })
+    if (url.includes('/versions?')) return Response.json([{ id: 'pinnedVersion', version_number: '0.6' }])
+    if (options?.method === 'PUT') {
+      saved = JSON.parse(options.body)
+      current = clientPlan({ config: saved })
+      return Response.json({ config: saved })
+    }
+    return Response.json(current)
+  }
+  const { root } = mount(ClientPack, { serverId: 'preview', server: { loader: 'fabric', version: '1.21.1' } },
+    ['server.view', 'clientpacks.read', 'clientpacks.manage'])
+  button('Open client pack', root).click()
+  await settle()
+  root.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }))
+  await settle()
+  button('Choose version', root).click()
+  await settle()
+  button('Add to client pack', root).click()
+  await settle()
+  button('Save and review', root).click()
+  await settle()
+  assert.deepEqual(saved.selections, [{ key: 'client:sodium', version_id: 'pinnedVersion', requirement: 'required' }])
+  assert.ok(calls.some(url => url.includes('game_versions=1.21.1') && url.includes('loaders=fabric')))
+  assert.ok(calls.every(url => !url.includes('/install')))
+})
+
+test('client pack displays request failures and permits retry', async () => {
+  let failing = true
+  globalThis.fetch = async () => failing
+    ? Response.json({ error: 'Modrinth unavailable; retry shortly' }, { status: 503 })
+    : Response.json(clientPlan())
+  const { root } = mount(ClientPack, { serverId: 'preview', server: { loader: 'fabric' } },
+    ['server.view', 'clientpacks.read'])
+  button('Open client pack', root).click()
+  await settle()
+  assert.match(root.querySelector('[role=alert]').textContent, /Modrinth unavailable/)
+  failing = false
+  button('Hide editor', root).click()
+  await settle()
+  button('Open client pack', root).click()
+  await settle()
+  assert.equal(root.querySelector('[role=alert]'), null)
+  assert.match(root.textContent, /Pack contents/)
+})
 
 test('installed entry points handle manifest, disabled hash match and unknown files for read-only users', async () => {
   const calls = []

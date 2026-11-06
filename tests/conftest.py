@@ -51,6 +51,13 @@ def _reset_modrinth_state():
     clear_caches()
 
 
+@pytest.fixture(autouse=True)
+def _isolated_client_pack_state(tmp_path, monkeypatch):
+    """Importer unit tests must never retain metadata in the real app data."""
+    from backend.modrinth import client_pack
+    monkeypatch.setattr(client_pack, "_root", lambda: tmp_path / "client-pack-state")
+
+
 @pytest.fixture
 def tmp_servers_root(tmp_path, monkeypatch):
     """Redirect server/index/java roots to a temp dir.

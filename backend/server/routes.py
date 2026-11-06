@@ -582,7 +582,7 @@ SETTABLE_SETTINGS_FIELDS = _SETTINGS_RECORD_FIELDS | _SETTINGS_PROPERTY_FIELDS
 _SETTINGS_IGNORED_ECHO_FIELDS = frozenset({
     'id', 'createdAt', 'updatedAt', 'runtime',
     'javaCompatibility', 'javaRequirement',
-    'kind', 'capabilities',
+    'kind', 'capabilities', 'loaderVersion',
 })
 
 _MIN_PORT = 1
@@ -1805,6 +1805,12 @@ def delete_server_route(server_id, server):
     # Delete files on disk — unless the folder was imported in place and
     # belongs to the user.
     removal_error = None
+    try:
+        from backend.modrinth.client_pack import delete_state
+        delete_state(server, install_path)
+    except OSError as exc:
+        logger.exception('Could not remove client pack state for %s', server_id)
+        removal_error = f'Client pack cleanup failed: {exc}'
     if install_path and install_path.exists() and not server.get('external'):
         try:
             shutil.rmtree(install_path, onerror=_handle_remove_readonly)
@@ -2110,7 +2116,10 @@ def install_server(server_id, server):
                 return
 
             if result.success:
-                updates: dict = {'status': 'stopped'}
+                updates: dict = {
+                    'status': 'stopped',
+                    'loaderVersion': (result.details or {}).get('loader_version'),
+                }
                 if result.launch is not None:
                     updates['launch'] = result.launch.to_dict()
                 storage.update_server(server_id, updates)
