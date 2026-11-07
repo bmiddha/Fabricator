@@ -34,6 +34,38 @@ def redeem(client, link):
     return client.post("/api/world-shares/download", json={"token": link["url"].split("#")[1]})
 
 
+def test_export_share_activity_is_scoped_and_never_contains_bearer(fixture_servers, client):
+    from backend.events import store
+    metadata = export(client)
+    link = share(client, metadata)
+    response = redeem(client.application.test_client(use_cookies=False), link)
+    assert response.status_code == 200
+    response.close()
+    assert client.delete("/api/servers/source/world-export-shares/" + link["id"]).status_code == 200
+    assert client.delete(endpoint() + "/" + metadata["id"]).status_code == 200
+    rows = store.history("source")["items"]
+    assert [row["action"] for row in rows] == [
+        "worlds.export.delete", "worlds.share.revoke", "worlds.share.create", "worlds.export",
+    ]
+    assert all(row["outcome"] == "succeeded" and row["actor"]["kind"] == "unattributed" for row in rows)
+    assert not store.history("unrelated")["items"]
+    assert link["url"].split("#")[1] not in json.dumps(rows)
+
+
+def test_export_storage_failure_is_audited_without_storage_details(fixture_servers, client, monkeypatch):
+    from backend.events import store
+    from backend.server import world_exports
+    def fail(*args):
+        raise OSError("private-storage-canary")
+    monkeypatch.setattr(world_exports, "build", fail)
+    response = client.post(endpoint(), json={"world_id": "island"})
+    assert response.status_code == 500
+    rows = store.history("source")["items"]
+    assert len(rows) == 1 and rows[0]["action"] == "worlds.export"
+    assert rows[0]["outcome"] == "failed"
+    assert "private-storage-canary" not in json.dumps(rows)
+
+
 @pytest.mark.parametrize("loader", ["vanilla", "fabric", "quilt", "forge", "neoforge",
                                    "paper", "purpur", "pufferfish", "folia"])
 def test_layout_exact_bytes_boundaries_and_immutability(fixture_servers, client, loader):

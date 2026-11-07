@@ -14,6 +14,9 @@ not supported. No live snapshot or automatic server stop is provided.
 
 Existing archives remain downloadable while the instance runs.
 
+Activity records export, archive deletion, share creation and revocation.
+Bearer links and world contents are never included in those events.
+
 ## Exact content and compatibility
 
 The gzip-compressed POSIX/PAX tar archive has this shape:

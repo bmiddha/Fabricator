@@ -534,7 +534,7 @@ def _publish_worlds(root, txn, journal):
         _sync_dir(txn / "stage")
 
 
-def run(kind, source_id, data, job_id=None):
+def run(kind, source_id, data, job_id=None, *, audit=True):
     job_id = job_id or progress.generate_job_id("transfer")
     ids = [source_id] + ([data["destinationId"]] if isinstance(data.get("destinationId"), str) else [])
     server_id = storage.generate_server_id() if kind == "fork" else None
@@ -546,7 +546,7 @@ def run(kind, source_id, data, job_id=None):
     journal = None
     root_dest = None
     progress.update(job_id, phase="queued", kind=kind, sourceId=source_id,
-                    destinationId=data.get("destinationId"))
+                    destinationId=data.get("destinationId"), audit=audit)
     try:
         with locked(ids):
             plan, source, root, entries = _plan(kind, source_id, data)

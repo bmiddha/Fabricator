@@ -211,7 +211,7 @@ def track_job(key, server_id, action, phase, *, ref=None, related_server=None, r
                     outcome=outcome, who=who, alert=alert, ref=ref)
             if related_server and related_server != row["server_id"]:
                 _insert(db, server_id=related_server, action=row["action"],
-                        outcome=outcome, who=who)
+                        outcome=outcome, who=who, ref=ref)
             db.execute("UPDATE jobs SET terminal=1 WHERE key=?", (key,))
 
 

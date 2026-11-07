@@ -48,6 +48,10 @@ backups. Plans live beside the server index in `modpack-updates/`; directories
 are private and plan files are mode `0600`. Failed/interrupted operations
 require a fresh review rather than silently continuing.
 
+Activity records review, staging, startup checks and promotion with the
+initiating actor and final outcome. Failed workers use the `job.failed` alert;
+the internal staging fork is not recorded as a second job.
+
 ## Permissions
 
 All operations need `server.view`, `modpacks.install`, `files.read` and

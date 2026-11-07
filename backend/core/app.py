@@ -82,7 +82,6 @@ def create_app() -> Flask:
     from backend.events.service import init_events
     app.before_request(capture_actor)
     app.after_request(record_response)
-    init_events(app)
     app.register_blueprint(world_exports_bp)
     app.register_blueprint(world_share_bp)
 
@@ -96,6 +95,7 @@ def create_app() -> Flask:
     recover_updates()
     from backend.server.world_exports import recover as recover_world_exports
     recover_world_exports()
+    init_events(app)
 
     # Same idea for abandoned world uploads (up to 10 GiB each). They are
     # stranded by exactly the unclean shutdown this boot follows, so sweeping

@@ -345,7 +345,7 @@ def stage(server_id, plan_id, data):
         options = {"name": data.get("name"), "includeWorlds": True, "includePlayerData": False,
                    "acknowledgeRisks": True}
         options["previewToken"] = transfers.preview("fork", server_id, options)["previewToken"]
-        result = transfers.run("fork", server_id, options)
+        result = transfers.run("fork", server_id, options, audit=False)
         staging_id = result["serverId"]
         # Record the fork immediately so a later copy failure is not orphaned.
         plan.update(stagingId=staging_id, status="staging")
@@ -515,14 +515,23 @@ def recover():
 
 
 def enqueue(action, server_id, plan_id, data=None):
+    from backend.events.store import track_job
+    key = f"staged-update:{plan_id}:{action}"
+    event_action = "modpacks.update." + action
+    track_job(key, server_id, event_action, "queued", ref=plan_id)
+
     def worker():
         try:
             if action == "stage":
                 stage(server_id, plan_id, data)
             else:
                 {"prepare": prepare, "validate": validate, "promote": promote}[action](server_id, plan_id)
+            plan = read(server_id, plan_id)
+            track_job(key, server_id, event_action, "done", ref=plan_id,
+                      related_server=plan.get("stagingId") if action in {"stage", "validate"} else None)
         except Exception as exc:
             logger.exception("Staged modpack %s failed", action)
+            track_job(key, server_id, event_action, "failed", ref=plan_id)
             plan = read(server_id, plan_id)
             published = plan.get("status") == "promoted"
             recovery_required = False
@@ -539,4 +548,8 @@ def enqueue(action, server_id, plan_id, data=None):
             plan.update(status="failed", failedAction=action, error=str(exc),
                         productionChanged=published, recoveryRequired=recovery_required)
             _write(_path(server_id, plan_id), plan)
-    threading.Thread(target=worker, name=f"modpack-{action}-{plan_id}", daemon=True).start()
+    try:
+        threading.Thread(target=worker, name=f"modpack-{action}-{plan_id}", daemon=True).start()
+    except RuntimeError:
+        track_job(key, server_id, event_action, "failed", ref=plan_id)
+        raise

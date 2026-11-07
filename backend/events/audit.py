@@ -72,6 +72,22 @@ def record_response(response):
         action = "configs.map"
     elif group == "client_pack" and request.method != "GET":
         action = "clientpacks.configure"
+    elif group == "modpack_updates":
+        if operation == "collection" and request.method == "POST":
+            action = "modpacks.update.prepare"
+        elif operation == "detail" and request.method == "DELETE":
+            action = "modpacks.update.delete"
+        elif operation == "action":
+            selected = (request.view_args or {}).get("action")
+            if selected in {"stage", "validate", "promote"}:
+                action = "modpacks.update." + selected
+    elif group == "world_exports":
+        action = {
+            "build_export": "worlds.export", "create_share": "worlds.share.create",
+            "revoke_share": "worlds.share.revoke", "delete_export": "worlds.export.delete",
+        }.get(operation)
+    elif group == "diagnostics":
+        action = {"sampling": "diagnostics.configure", "capture": "diagnostics.capture"}.get(operation)
     # Instance creation returns the assigned ID; never copy any other fields.
     if not sid and group == "server" and operation in {"create_server", "import_server"} and response.is_json:
         data = response.get_json()

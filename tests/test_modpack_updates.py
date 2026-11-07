@@ -465,3 +465,60 @@ def test_review_cannot_be_deleted_while_production_needs_recovery(update_fixture
     assert response.status_code == 400
     assert "Recover" in response.json["error"]
     assert f.u.read("source", plan["id"])
+
+
+def test_worker_activity_keeps_initiator_and_does_not_duplicate_internal_fork(update_fixture, app, monkeypatch):
+    from backend.events import store
+    f = update_fixture
+    plan = f.prepare()
+    workers = []
+    monkeypatch.setattr(f.u.threading, "Thread", lambda target, **kw:
+                        SimpleNamespace(start=lambda: workers.append(target)))
+    client = app.test_client()
+    url = f"/api/servers/source/modpack-updates/{plan['id']}"
+    for action, consent in [
+        ("stage", {"name": "activity-test", "acknowledgeRisks": True}),
+        ("validate", {"executePackCode": True}),
+        ("promote", {"confirmName": f.storage.get_server("source")["name"]}),
+    ]:
+        response = client.post(url + "/" + action, json={"reviewToken": plan["reviewToken"], **consent})
+        assert response.status_code == 202, response.json
+        assert len(workers) == 1
+        workers.pop()()
+        plan = f.u.read("source", plan["id"])
+    assert plan["status"] == "promoted" and plan["safetySnapshotId"]
+    rows = store.history("source")["items"]
+    assert len(rows) == 6
+    for action in ("stage", "validate", "promote"):
+        events = [row for row in rows if row["action"] == "modpacks.update." + action]
+        assert {row["outcome"] for row in events} == {"accepted", "succeeded"}
+        assert len(events) == 2
+        assert all(row["actor"]["kind"] == "unattributed" for row in events)
+    staging_rows = store.history(plan["stagingId"])["items"]
+    assert {row["action"] for row in staging_rows} == {"modpacks.update.stage", "modpacks.update.validate"}
+    assert len(staging_rows) == 2
+    assert all(row["ref"] == plan["id"] for row in staging_rows)
+    assert not any(row["action"] in {"server.fork", "backups.create"} for row in store.history(instance=True)["items"])
+
+
+def test_worker_failure_is_attributed_and_alerted_without_error_payload(update_fixture, app, monkeypatch):
+    from backend.events import store
+    f = update_fixture
+    plan = f.stage(f.prepare())
+    workers = []
+    monkeypatch.setattr(f.u.threading, "Thread", lambda target, **kw:
+                        SimpleNamespace(start=lambda: workers.append(target)))
+    def fail(*args):
+        raise ValueError("private-error-canary")
+    monkeypatch.setattr(f.u, "validate", fail)
+    response = app.test_client().post(
+        f"/api/servers/source/modpack-updates/{plan['id']}/validate",
+        json={"reviewToken": plan["reviewToken"], "executePackCode": True})
+    assert response.status_code == 202
+    workers.pop()()
+    assert f.u.read("source", plan["id"])["status"] == "failed"
+    rows = store.history("source")["items"]
+    assert [row["outcome"] for row in rows] == ["failed", "accepted"]
+    assert rows[0]["alert"] == "job.failed"
+    assert rows[0]["actor"]["kind"] == "unattributed"
+    assert "private-error-canary" not in json.dumps(rows)
