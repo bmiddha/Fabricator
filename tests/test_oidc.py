@@ -118,6 +118,58 @@ def test_session_and_grants_are_not_cached_in_cookie(oidc_app):
     assert client.get("/api/auth/status").get_json()["authenticated"] is False
 
 
+@pytest.mark.parametrize("method,suffix,permission", [
+    ("get", "", "map.read"),
+    ("post", "/session", "map.read"),
+    ("post", "/setup", "map.manage"),
+    ("put", "/enabled", "map.manage"),
+    ("post", "/install-bluemap", "map.manage"),
+])
+def test_maps_are_separate_and_server_scoped(oidc_app, monkeypatch, method, suffix, permission):
+    from backend.maps import service
+    # Permission failures must happen before resolving local paths or connecting.
+    spy = MagicMock(side_effect=AssertionError("map transport must not run"))
+    monkeypatch.setattr(service, "upstream", spy)
+    client = oidc_app.test_client()
+    sign_in(client)
+    assert getattr(client, method)("/api/servers/a/map" + suffix).status_code == 403
+    sign_in(client, "bob")
+    assert getattr(client, method)("/api/servers/a/map" + suffix).status_code == 404
+    spy.assert_not_called()
+    assert permission in permissions.CATALOG
+
+
+def test_map_ticket_checks_live_grants_and_logout(oidc_app, monkeypatch):
+    from backend.maps import service
+    from backend.server import storage
+    user = permissions.Principal(
+        "map-reader", ISSUER, (), frozenset(),
+        {"a": frozenset({"server.view", "map.read"})}, {"a": ()},
+    )
+    oidc_app.extensions["oidc"].users[user.subject] = user
+    monkeypatch.setattr(storage, "get_server", lambda sid: {"id": sid, "map": {"enabled": True}})
+    monkeypatch.setattr(service, "manifest", lambda server: {"port": 8800})
+    monkeypatch.setattr(service, "health", lambda server, config: {"global_markers": {}})
+    monkeypatch.setattr(service, "upstream", lambda config, path: b'{"maps":[]}')
+    client = oidc_app.test_client()
+    sign_in(client, user.subject)
+    response = client.post("/api/servers/a/map/session")
+    assert response.status_code == 200
+    url = response.json["url"] + "settings.json"
+    assert client.get(url).status_code == 200
+    assert client.post("/api/servers/b/map/session").status_code == 404
+    assert client.post("/api/servers/a/map/setup").status_code == 403
+    assert client.post("/api/servers/a/map/install-bluemap").status_code == 403
+    # Cookies are deliberately unnecessary for map-only capabilities.
+    assert oidc_app.test_client().get(url).status_code == 200
+    oidc_app.extensions["oidc"].users.pop(user.subject)
+    assert client.get(url).status_code == 401
+    oidc_app.extensions["oidc"].users[user.subject] = user
+    assert client.get(url).status_code == 200
+    assert client.post("/api/auth/logout").status_code == 200
+    assert oidc_app.test_client().get(url).status_code == 401
+
+
 def test_modrinth_project_details_allow_mod_readers_without_install(oidc_app, monkeypatch):
     grants = frozenset({"server.view", "mods.read"})
     user = permissions.Principal("mod-reader", ISSUER, (), frozenset(), {"a": grants}, {"a": ()})
@@ -169,6 +221,8 @@ def test_client_pack_permissions_are_separate_and_server_scoped(oidc_app, method
 
 def test_route_permission_coverage(oidc_app):
     exceptions = {
+        ("GET", "/api/servers/<server_id>/map/view/<ticket>/"),
+        ("GET", "/api/servers/<server_id>/map/view/<ticket>/<path:path>"),
         ("POST", "/api/client-pack-shares/download"),
         ("GET", "/api/health"), ("GET", "/api/auth/status"), ("POST", "/api/auth/logout"),
         ("GET", "/api/auth/oidc/login"), ("GET", "/api/auth/oidc/callback"),

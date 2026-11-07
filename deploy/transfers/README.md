@@ -84,6 +84,14 @@ starting. There is no universal mod/plugin secret scrubber or port discovery,
 and third-party ports are not automatically allocated. No new public tunnel,
 DNS name or proxy route is provisioned.
 
+Known BlueMap controls are reset: panel map metadata, manifests and adapter
+nonces are not inherited; its webserver is disabled and resource-download
+consent is reset to false. Other BlueMap configuration remains trusted content.
+To configure a fork's private map, follow the map guide's existing-configuration
+procedure to move the reset `core.conf` and `webserver.conf` aside, then grant
+fresh consent and run explicit setup. Registered managed map ports also count
+as occupied when allocating a fork's ports.
+
 ## Copy world to instance
 
 Select the source instance, its supported world group, a different stopped
@@ -127,6 +135,9 @@ trees. Vanilla/Bukkit instances additionally require identical launch-jar
 hashes. There is no override for missing dependencies, upgrades, downgrades,
 snapshot worlds or unverifiable formats. This is intentionally conservative,
 not a claim that arbitrary modpacks are interchangeable.
+Managed map configs include per-instance ports/nonces; differences still
+trigger the conservative mod-config check. This version does not automatically
+reconcile those configs for world copy.
 
 Bukkit `uid.dat` is omitted so the destination generates its own plugin world
 UUID. `session.lock` is not transferred. Integral `level.dat` UUIDs, mod data,

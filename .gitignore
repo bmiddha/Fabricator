@@ -72,6 +72,9 @@ build/
 
 # Java
 java/
+!tools/global-waystones/src/*/java/
+.build-tools/
+.gradle/
 .claude/settings.local.json
 
 docs

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "fabricator_global_waystones",
+  "version": "1.0.0",
+  "name": "Fabricator Global Waystones",
+  "description": "Global-only Balm Waystones markers for private BlueMap viewers.",
+  "license": "AGPL-3.0-only",
+  "environment": "server",
+  "entrypoints": {
+    "main": ["io.github.bmiddha.fabricator.GlobalWaystones"]
+  },
+  "depends": {
+    "java": ">=21",
+    "minecraft": "1.21.1",
+    "fabricloader": ">=0.18.4",
+    "fabric-api": "*",
+    "bluemap": "5.7",
+    "waystones": "21.1.37",
+    "balm": "21.0.63"
+  }
+}

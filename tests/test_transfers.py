@@ -577,3 +577,24 @@ def test_opposing_copies_use_deterministic_locks(fixture_servers):
     assert all(not thread.is_alive() for thread in threads)
     assert len(results) == 2 and sum(isinstance(result, dict) for result in results) == 1
     assert any("stale" in str(result) for result in results)
+
+
+def test_fork_resets_managed_map_authority_and_listeners(fixture_servers):
+    t, storage, _, _, src, _, _, _ = fixture_servers
+    (src / "config" / "bluemap").mkdir(parents=True)
+    (src / "config" / "bluemap" / "core.conf").write_text("accept-download: true\n")
+    (src / "config" / "bluemap" / "webserver.conf").write_text("enabled: true\nport: 8800\n")
+    (src / "config" / "fabricator-map.json").write_text('{"nonce":"source-secret"}')
+    (src / ".fabricator-map.json").write_text('{"nonce":"source-secret","port":8800}')
+    storage.update_server("source", {"map": {"enabled": True, "port": 8800}})
+    before = tree(src)
+    result = t.run("fork", "source", prepare(t, "fork", fork_options()))
+    record = storage.get_server(result["serverId"])
+    clone = Path(record["installPath"])
+    assert "map" not in record
+    assert not (clone / ".fabricator-map.json").exists()
+    assert not (clone / "config" / "fabricator-map.json").exists()
+    assert (clone / "config" / "bluemap" / "webserver.conf").read_text() == "enabled: false\n"
+    assert "accept-download: false" in (clone / "config" / "bluemap" / "core.conf").read_text()
+    assert storage.port_values({"map": {"port": 8800}}) == {8800}
+    assert tree(src) == before

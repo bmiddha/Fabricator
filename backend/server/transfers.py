@@ -46,6 +46,8 @@ _FORK_DIRS = {"mods", "plugins", "config", "defaultconfigs", "libraries", "versi
               ".fabric", ".quilt", "datapacks"}
 _FORK_FILES = {"eula.txt", "server-icon.png", "bukkit.yml", "spigot.yml", "paper.yml",
                "fabric-server-launcher.properties", "quilt-server-launcher.properties"}
+_MAP_CONTROLS = {"config/fabricator-map.json", "config/bluemap/core.conf",
+                 "config/bluemap/webserver.conf"}
 _WARNINGS = [
     "Both instances must be stopped in Fabricator; external JVMs and external filesystem writers must also be stopped.",
     "Mod/plugin configs and data are trusted executable server content and may contain credentials, remote databases or embedded listener ports. Review them before starting; no universal secret scrubber or port discovery is possible.",
@@ -226,6 +228,8 @@ def _fork_skip(groups, include_worlds, include_players):
 
     def skip(rel):
         parts = rel.split("/")
+        if rel in _MAP_CONTROLS:
+            return True
         if parts[0] not in world_names | _FORK_DIRS | _FORK_FILES and not parts[0].endswith(".jar"):
             return True
         if parts[0] in _EXCLUDED or parts[0].startswith(".") and parts[0] not in {".fabric", ".quilt"}:
@@ -435,6 +439,12 @@ def _fork_record(source, root, stage, plan, server_id):
     props["management-server-enabled"] = "false"
     (stage / "server.properties").write_text("".join(
         f"{k}={escape_properties_value(v)}\n" for k, v in props.items()), encoding="utf-8")
+    if (root / "config" / "bluemap").exists():
+        config = stage / "config" / "bluemap"
+        config.mkdir(parents=True, exist_ok=True)
+        (config / "core.conf").write_text(
+            "accept-download: false\nrender-thread-count: 1\nmetrics: false\n", encoding="utf-8")
+        (config / "webserver.conf").write_text("enabled: false\n", encoding="utf-8")
     from backend.velocity.forwarding import _yaml_update
     for rel, assignments in [
         ("config/paper-global.yml", {("proxies", "velocity", "enabled"): False, ("proxies", "velocity", "secret"): ""}),

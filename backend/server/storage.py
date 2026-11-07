@@ -201,6 +201,11 @@ def port_values(record, *, default_game=False):
             continue
         if not isinstance(raw, bool) and 1 <= port <= 65535:
             result.add(port)
+    map_config = record.get('map')
+    if isinstance(map_config, dict):
+        port = map_config.get('port')
+        if type(port) is int and 1 <= port <= 65535:
+            result.add(port)
     return result
 
 

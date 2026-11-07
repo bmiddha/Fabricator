@@ -121,6 +121,15 @@ def _auth_gate():
         return None  # CORS preflight
     if not request.path.startswith("/api/"):
         return None  # static frontend / SPA (setup & login pages)
+    # Opaque-sandbox map requests cannot use panel cookies. Only the exact
+    # read-only resource handlers accept a server-bound, expiring capability;
+    # setup/session endpoints still use normal authentication and permissions.
+    if request.endpoint == "maps.resource":
+        from backend.maps.service import ticket_allowed
+        args = request.view_args or {}
+        if ticket_allowed(args.get("server_id"), args.get("ticket")):
+            return None
+        return jsonify({"error": "map session expired"}), 401
     if not current_app.config.get("FABRICATOR_AUTH_ENABLED"):
         return None  # explicit opt-out (FABRICATOR_DISABLE_AUTH)
 
