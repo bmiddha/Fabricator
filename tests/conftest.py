@@ -57,6 +57,13 @@ def _reset_modrinth_state():
 
 
 @pytest.fixture(autouse=True)
+def _isolated_events(tmp_path, monkeypatch):
+    from backend.events import store
+    monkeypatch.setattr(store, "db_path", lambda: tmp_path / "event-state" / "events.sqlite3")
+    monkeypatch.setenv("FABRICATOR_DISABLE_NOTIFICATIONS", "1")
+
+
+@pytest.fixture(autouse=True)
 def _isolated_client_pack_state(tmp_path, monkeypatch):
     """Importer unit tests must never retain metadata in the real app data."""
     from backend.modrinth import client_pack

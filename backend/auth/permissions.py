@@ -24,6 +24,14 @@ _rule("POST", "/servers", "servers.create")
 _rule("POST", "/servers/import", "servers.import")
 _rule("POST", "/servers/import/inspect", "servers.import")
 _rule("PUT", "/servers/order", "servers.reorder")
+_rule("GET", "/activity", "host.activity.read")
+_rule("GET", "/notifications", "notifications.manage")
+_rule("POST", "/notifications/destinations", "notifications.manage")
+for method in ("PUT", "DELETE"):
+    _rule(method, "/notifications/destinations/<destination_id>", "notifications.manage")
+_rule("POST", "/notifications/destinations/<destination_id>/test", "notifications.manage")
+_server("GET", "/activity", "activity.read")
+_server("GET", "/alerts", "activity.read")
 _server("POST", "/transfers/<kind>/preview", "server.view")
 _server("POST", "/transfers/<kind>", "server.view")
 _server("GET", "/worlds", "worlds.read")
@@ -180,7 +188,7 @@ CATALOG = frozenset(
 )
 GLOBAL = frozenset(
     p for p in CATALOG
-    if p.startswith(("servers.", "host.", "java.", "updates.", "tunnels.", "tokens.", "mcp.", "dns."))
+    if p.startswith(("servers.", "host.", "java.", "updates.", "tunnels.", "tokens.", "mcp.", "dns.", "notifications."))
 )
 DEFAULT_ROLES = {
     "admin": CATALOG,

@@ -545,7 +545,8 @@ def run(kind, source_id, data, job_id=None):
     committed = False
     journal = None
     root_dest = None
-    progress.update(job_id, phase="queued")
+    progress.update(job_id, phase="queued", kind=kind, sourceId=source_id,
+                    destinationId=data.get("destinationId"))
     try:
         with locked(ids):
             plan, source, root, entries = _plan(kind, source_id, data)

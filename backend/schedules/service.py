@@ -346,7 +346,7 @@ def _next_run(schedule_id: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 
-def run_schedule(server_id: str, schedule_id: str) -> None:
+def run_schedule(server_id: str, schedule_id: str, *, audit_run=None) -> None:
     """APScheduler entry point, also used by "run now". Never raises.
 
     ponytail: delays sleep on one of the scheduler's shared pool threads (10 by
@@ -354,9 +354,14 @@ def run_schedule(server_id: str, schedule_id: str) -> None:
     schedules appear. Overlapping fires of one schedule are skipped by
     APScheduler's max_instances=1.
     """
+    from backend.events.store import track_job
+    run_id = audit_run or uuid.uuid4().hex
+    if not audit_run:
+        track_job("schedule:" + run_id, server_id, "schedules.run", "starting", ref=run_id)
     try:
         schedule = get_schedule(server_id, schedule_id)
         if schedule is None:
+            track_job("schedule:" + run_id, server_id, "schedules.run", "cancelled", ref=run_id)
             return  # deleted since the job fired
         status, message = _run_steps(server_id, schedule["steps"])
     except Exception as exc:
@@ -364,6 +369,8 @@ def run_schedule(server_id: str, schedule_id: str) -> None:
         status, message = "error", str(exc)
     logger.info("Schedule %s on %s: %s (%s)", schedule_id, server_id, status, message)
     _last_runs[schedule_id] = {"at": iso_z_now(), "status": status, "message": message}
+    track_job("schedule:" + run_id, server_id, "schedules.run",
+              "failed" if status == "error" else "cancelled" if status == "skipped" else "done", ref=run_id)
 
 
 def _run_steps(server_id: str, steps: List[Dict[str, Any]]) -> Tuple[str, str]:

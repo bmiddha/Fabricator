@@ -61,6 +61,14 @@ def update(job_id: str, /, **kwargs: Any) -> None:
             **kwargs,
             "updated_at": timestamp,
         }
+        from backend.events.store import track_job
+        entry = _store[job_id]
+        action = {"restore": "worlds.restore", "world_import": "worlds.import",
+                  "fork": "server.fork", "world-copy": "worlds.copy"}.get(entry.get("kind"), "backups.create")
+        track_job("backup:" + job_id, entry.get("server_id") or entry.get("sourceId"),
+                  action, kwargs.get("phase"), ref=job_id,
+                  related_server=entry.get("destinationId") or (entry.get("result") or {}).get("destinationId"),
+                  restart_error=bool(kwargs.get("restart_error")))
 
 
 def get(job_id: str, /) -> Dict[str, Any]:

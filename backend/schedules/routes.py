@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import threading
+import uuid
 
 from flask import Blueprint, jsonify, request
 
@@ -52,7 +53,11 @@ def delete_schedule(server_id, server, schedule_id):
 def run_schedule_now(server_id, server, schedule_id):
     if service.get_schedule(server_id, schedule_id) is None:
         return jsonify({"error": "Schedule not found"}), 404
+    from backend.events.store import track_job
+    run_id = uuid.uuid4().hex
+    track_job("schedule:" + run_id, server_id, "schedules.run", "starting", ref=run_id)
     threading.Thread(
-        target=service.run_schedule, args=(server_id, schedule_id), daemon=True
+        target=service.run_schedule, args=(server_id, schedule_id),
+        kwargs={"audit_run": run_id}, daemon=True
     ).start()
     return jsonify({"success": True}), 202

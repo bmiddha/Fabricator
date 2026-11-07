@@ -8,6 +8,8 @@ import McpPanel from '../../components/settings/McpPanel.vue'
 import DnsPanel from '../../components/settings/DnsPanel.vue'
 import ChangePasswordPanel from '../../components/settings/ChangePasswordPanel.vue'
 import PasswordTogglePanel from '../../components/settings/PasswordTogglePanel.vue'
+import NotificationsPanel from '../../components/settings/NotificationsPanel.vue'
+import ActivityTimeline from '../../components/ActivityTimeline.vue'
 import { useAuthStore } from '../../stores/auth'
 import { useServerStore } from '../../stores/server'
 import { usePreferencesStore } from '../../stores/preferences'
@@ -246,6 +248,8 @@ onMounted(async () => {
     </Panel>
 
     <JavaManagerPanel v-if="activeSection === 'java'" />
+    <NotificationsPanel v-if="activeSection === 'notifications'" />
+    <ActivityTimeline v-if="activeSection === 'activity'" />
 
     <McpPanel v-if="activeSection === 'mcp'" />
     <DnsPanel v-if="activeSection === 'dns'" :server-id="hasServer ? String(route.params.id) : ''" />

@@ -86,6 +86,7 @@ const ALL_NAV_ITEMS = [
   { name: 'ServerFiles',    label: 'nav.files',      icon: 'files'    },
   { name: 'ServerBackups',  label: 'nav.backups',    icon: 'backups'  },
   { name: 'ServerSchedules', label: 'nav.schedules', icon: 'schedules' },
+  { name: 'ServerActivity', label: 'activity.title', icon: 'schedules' },
   { name: 'ServerPlayit',   label: 'nav.playit',     icon: 'network'  },
   { name: 'ServerSettings', label: 'nav.properties', icon: 'properties' }
 ]

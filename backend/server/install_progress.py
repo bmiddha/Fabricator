@@ -39,7 +39,7 @@ _store: Dict[str, Dict[str, Any]] = {}
 _TERMINAL_PHASES = frozenset({"done", "failed"})
 
 
-def update(server_id: str, /, **kwargs: Any) -> None:
+def update(server_id: str, /, *, _audit_terminal: bool = True, **kwargs: Any) -> None:
     """Merge ``kwargs`` into the entry for ``server_id``.
 
     ``server_id`` is positional-only so callers may also pass
@@ -59,6 +59,13 @@ def update(server_id: str, /, **kwargs: Any) -> None:
             **kwargs,
             "updated_at": timestamp,
         }
+        from backend.events.store import record_job_issue, track_job
+        kind = kwargs.get("kind") if kwargs.get("phase") == "starting" else _store[server_id].get("kind")
+        action = "server.upgrade" if kind == "upgrade" else "server.install"
+        if _audit_terminal or kwargs.get("phase") != "done":
+            track_job("install:" + server_id, server_id, action, kwargs.get("phase"))
+        if kwargs.get("modpack_error") and not existing.get("modpack_error"):
+            record_job_issue("install:" + server_id, server_id, "modpacks.install")
 
 
 def get(server_id: str, /) -> Dict[str, Any]:

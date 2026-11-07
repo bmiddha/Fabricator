@@ -2094,7 +2094,7 @@ def install_server(server_id, server):
         prepared = None
         try:
             def _on_progress(phase, detail):
-                install_progress.update(server_id, phase=phase, **detail)
+                install_progress.update(server_id, phase=phase, _audit_terminal=False, **detail)
 
             # Fetch the pack before the loader: it declares which loader build
             # it was assembled against, and installing a different one breaks

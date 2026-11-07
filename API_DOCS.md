@@ -11,6 +11,7 @@ Errors are consistently `{"error": "<message>"}`. Anything under `/api` not list
 ## Contents
 
 - [Authentication](#authentication)
+- [Alerts and activity history](#alerts-and-activity-history)
 - [Health](#health)
 - [Servers](#servers)
 - [Instance forks and world copies](#instance-forks-and-world-copies)
@@ -81,6 +82,61 @@ Malformed/unsupported operations return `400`; missing/foreign plans or
 permissions return `403` (unknown plans may return `400`); stale review/input
 bindings return `409`. Worker failures are explicit persisted `failed` states.
 Uploaded pack handles use the existing owner-bound modpack upload endpoint.
+
+## Alerts and activity history
+
+Session-authenticated; **unavailable to MCP API tokens**. OIDC `admin` includes
+these permissions; custom roles must opt in. Shared-password installations retain
+their existing all-panel authority. See the [operator guide](deploy/notifications/README.md)
+for safe destinations, event coverage, attribution, disk thresholds and retention.
+
+| Method | Path (prefix `/api`) | Capability / response |
+|---|---|---|
+| GET | `/activity?before=<event_id>&alerts=1` | Global `host.activity.read`; installation-wide history (omit `alerts=1` for all events) |
+| GET | `/servers/<server_id>/activity?before=<event_id>` | `server.view` + `activity.read`; this server only |
+| GET | `/servers/<server_id>/alerts?before=<event_id>` | Same permissions; operational alerts only |
+| GET | `/notifications` | Global `notifications.manage`; sanitized destinations, latest 200 deliveries and 50 alerts |
+| POST | `/notifications/destinations` | Global `notifications.manage`; create, returns `201 {"id":"..."}` |
+| PUT | `/notifications/destinations/<id>` | Same permission; replace configuration, omit `url` to preserve the saved secret |
+| DELETE | `/notifications/destinations/<id>` | Same permission; delete and cancel pending deliveries |
+| POST | `/notifications/destinations/<id>/test` | Same permission; rate-limited queued test, `202 {"event_id":123,"status":"queued"}` |
+
+History returns `{ "items": [...], "next": 123 }`, at most 50 newest-first events.
+Pass `next` as `before` for the next page; `null` means no older page.
+Events contain `id`, Unix-seconds `at`, `actor` (`kind`, `id`, optional
+OIDC `issuer`/token owner `subject`), `server_id` (null for installation scope),
+fixed `action`, `outcome`, optional `alert`, and optional opaque job `ref`.
+Possible outcomes are `accepted`, `succeeded`, `failed`, `interrupted`, `skipped`.
+Responses are `Cache-Control: no-store`; no raw config, console or error payload
+is present.
+
+Destination create/update body (maximum 16 KiB):
+
+```json
+{
+  "name": "Operations",
+  "kind": "webhook",
+  "url": "https://hooks.example/credential-bearing-path",
+  "enabled": true,
+  "alerts": ["server.crashed", "backup.failed", "job.failed", "disk.pressure", "disk.recovered"]
+}
+```
+
+`kind` is `webhook` or `discord`. At most 20 destinations; names are 1-80
+characters; URLs at most 2048 ASCII characters, encrypted at rest and write-only.
+At least one supported alert must be selected. Returned destination fields are
+`id`, `name`, `kind`, `enabled`, `alerts`, `has_url`; neither plaintext nor
+ciphertext URLs are exposed. A type change requires a replacement URL.
+Unconfigured private/plain-HTTP/nonstandard-port destinations are rejected;
+DNS and IP policy are revalidated on every delivery attempt. URL syntax errors
+return 400; nonexistent destination IDs 404. Queued test means **not yet delivered**.
+
+Delivery records include `id`, `destination_id`, display `name`, `event_id`,
+Unix-seconds `created`/`next_at`, `state`, `attempts`, and fixed safe `error` code.
+States are `pending`, `sending`, `sent`, `failed`, `cancelled`, `suppressed`.
+No upstream response body or destination URL is returned.
+
+---
 
 ## Instance forks and world copies
 

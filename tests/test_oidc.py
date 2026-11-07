@@ -51,6 +51,35 @@ def sign_in(client, sub="alice"):
         state.update(authenticated=True, auth_method="oidc", issuer=ISSUER, sub=sub)
 
 
+def test_activity_and_notification_permissions_are_separate(oidc_app, monkeypatch):
+    from backend.events import store, transport
+    from backend.server import storage
+    with oidc_app.app_context():
+        storage.create_server({"id": "a", "name": "A", "loader": "vanilla", "version": "1.21"})
+    # require_server uses the server index; use its actual ID below.
+    sid = storage.get_all_servers()[0]["id"]
+    user = permissions.Principal("auditor", ISSUER, (), frozenset(),
+                                {sid: frozenset({"server.view", "activity.read"})}, {sid: ()})
+    oidc_app.extensions["oidc"].users["auditor"] = user
+    client = oidc_app.test_client()
+    sign_in(client, "auditor")
+    store.emit("configs.update", server_id=sid)
+    store.emit("configs.update", server_id="hidden")
+    assert client.get(f"/api/servers/{sid}/activity").status_code == 200
+    assert len(client.get(f"/api/servers/{sid}/activity").get_json()["items"]) == 1
+    assert client.get(f"/api/servers/{sid}/alerts").status_code == 200
+    assert client.get("/api/servers/hidden/activity").status_code == 404
+    assert client.get("/api/activity").status_code == 403
+    assert client.get("/api/notifications").status_code == 403
+    spy = MagicMock(side_effect=AssertionError("must not resolve or contact target"))
+    monkeypatch.setattr(transport, "target", spy)
+    assert client.post("/api/notifications/destinations", json={"url": "http://localhost"}).status_code == 403
+    spy.assert_not_called()
+    sign_in(client, "root")
+    assert client.get("/api/activity").status_code == 200
+    assert client.get("/api/notifications").status_code == 200
+
+
 @pytest.mark.parametrize("method,path,capability", [
     ("post", "/backup-configs", "backups.config.write"),
     ("put", "/backup-configs/cfg", "backups.config.write"),

@@ -46,6 +46,7 @@ const ROUTE_TITLE = {
   ServerFiles:    'nav.files',
   ServerBackups:  'nav.backups',
   ServerSchedules: 'nav.schedules',
+  ServerActivity: 'activity.title',
   ServerPlayit:   'nav.playit',
   ServerSettings: 'nav.properties',
   ServerGeneralSettings: 'nav.settings'

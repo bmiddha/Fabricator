@@ -616,6 +616,9 @@ def _apply_task_update_locked(task_id: str, **fields) -> None:
     if current is None:
         return
     current.update(fields)
+    if fields.get("status"):
+        from backend.events.store import track_job
+        track_job("java:" + task_id, None, "java.install", fields["status"], ref=task_id)
     current["updated_at"] = _now_iso()
     # Stamp ``completed_at`` (monotonic) the first time the task enters a
     # terminal state. Used by :func:`_evict_old_install_tasks` — wall-clock
@@ -803,6 +806,8 @@ def start_install_task(major: int) -> str:
             "thread": None,
         }
 
+    from backend.events.store import track_job
+    track_job("java:" + task_id, None, "java.install", "queued", ref=task_id)
     thread = threading.Thread(
         target=_run_install_task,
         args=(task_id, install_major, cancel_event, started_at),

@@ -261,6 +261,7 @@ class ServerProcessRegistry:
                 loader=server.get('loader'),
                 version=server.get('version'),
             )
+            manager.server_id = server_id
             self._instances[server_id] = manager
             return manager
 

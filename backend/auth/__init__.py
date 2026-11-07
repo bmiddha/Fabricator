@@ -109,6 +109,7 @@ def _bearer_decision(credential: str):
         else:
             g.principal = user
     service.touch_token_last_used(token_id)  # records AUTHORIZED use, not success
+    g.audit_token_id = token_id
     # Mark the request for the response filter. This is the ONLY place a request
     # is declared token-authenticated, so redaction cannot apply to a session.
     setattr(g, redaction.TOKEN_REQUEST_FLAG, True)

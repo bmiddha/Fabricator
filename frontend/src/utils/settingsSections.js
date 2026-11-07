@@ -11,6 +11,8 @@ import { t } from '../i18n'
  * `key` is the :section route param; `label` and `description` are i18n keys.
  */
 export const SETTINGS_SECTIONS = [
+  { key: 'notifications', label: 'notifications.title', description: 'notifications.description' },
+  { key: 'activity', label: 'activity.instanceTitle', description: 'activity.instanceDescription' },
   {
     key: 'dns',
     label: 'dns.title',
@@ -60,6 +62,8 @@ export function availableSettingsSections({ hasServer = false, managed = false, 
     if (section.hiddenWhenManaged && managed) return false
     if (section.requiresAuth && !authEnabled) return false
     const required = {
+      notifications: ['notifications.manage'],
+      activity: ['host.activity.read'],
       dns: ['dns.manage'],
       autostart: ['server.autostart.write'], java: ['java.read', 'java.install'],
       mcp: ['tokens.self.manage', 'tokens.all.manage', 'mcp.configure']

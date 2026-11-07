@@ -196,6 +196,8 @@ class ServerManager:
         # is still up; start() checks this flag to avoid launching a second
         # process on the same world during that window.
         self._stopping = False
+        self.server_id: Optional[str] = None
+        self._intentional_stop = threading.Event()
 
     def _parse_command(self, command: Optional[Iterable[str]]) -> Optional[List[str]]:
         if command is None:
@@ -549,6 +551,13 @@ class ServerManager:
             )
             self.diagnostics_run_id = uuid.uuid4().hex
             self._ps_process = None
+            self._intentional_stop = threading.Event()
+            if self.server_id:
+                threading.Thread(
+                    target=self._watch_exit,
+                    args=(self._process, self._intentional_stop),
+                    name=f"server-exit-{self.server_id}", daemon=True,
+                ).start()
             self._start_log_streams()
             time.sleep(0.5)
 
@@ -575,6 +584,16 @@ class ServerManager:
     def startup_ready(self) -> bool:
         """Whether the current run emitted Minecraft's readiness signal."""
         return self._ready_event.is_set()
+
+    def _watch_exit(self, process, intentional_stop):
+        process.wait()
+        # A zero exit code alone is not proof of an intentional stop. Only a
+        # panel stop/restart or explicit console stop suppresses the alert.
+        if not intentional_stop.is_set():
+            from backend.events.store import emit
+            emit("server.crashed", server_id=self.server_id, outcome="failed",
+                 alert="server.crashed", who={"kind": "system", "id": "process-monitor"},
+                 cooldown=300)
 
     def start(self, required_java_major: Optional[int] = None) -> dict:
         """Start the server process if it is not already running."""
@@ -650,6 +669,7 @@ class ServerManager:
                 return {"status": "stopped", "message": "Server is not running"}
 
             proc = self._process
+            self._intentional_stop.set()
             stdout_thread = self._stdout_thread
             stderr_thread = self._stderr_thread
             tps_thread = self._tps_thread
@@ -885,9 +905,14 @@ class ServerManager:
                 return {"success": False, "message": "Server stdin is not available"}
 
             try:
+                intentional = command.strip().lstrip("/").lower() in {"stop", "minecraft:stop", "shutdown"}
+                if intentional:
+                    self._intentional_stop.set()
                 stdin.write(command.strip() + "\n")
                 stdin.flush()
             except Exception as exc:  # pragma: no cover - best effort logging
+                if intentional:
+                    self._intentional_stop.clear()
                 logger.exception("Failed to send command to server")
                 return {
                     "success": False,

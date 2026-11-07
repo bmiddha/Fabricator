@@ -82,6 +82,8 @@ def _update_install_progress(server_id: str, **kwargs):
             **kwargs,
             'updated_at': iso_z_now(),
         }
+        from backend.events.store import track_job
+        track_job("modpack:" + server_id, server_id, "modpacks.install", kwargs.get("stage"))
 
 
 def _get_install_progress(server_id: str) -> dict:
@@ -828,9 +830,11 @@ def _run_modpack_install(server, data, run_install, build_modpack_info, *, log_l
     try:
         result = run_install(install_path, _progress_cb)
     except ModrinthApiError as exc:
+        _update_install_progress(server_id, stage='failed')
         _clear_install_progress(server_id)
         return _modrinth_error_response(exc)
     except Exception as exc:  # pragma: no cover - defensive error mapping
+        _update_install_progress(server_id, stage='failed')
         _clear_install_progress(server_id)
         current_app.logger.exception('Unexpected modpack install failure for %s', log_label)
         return jsonify({'error': f'Modpack install failed: {exc}'}), 500
