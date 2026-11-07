@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import StatCard from '../../components/ui/StatCard.vue'
 import Panel from '../../components/ui/Panel.vue'
+import InstanceTransfers from '../../components/InstanceTransfers.vue'
 import { installedModDisplayName, installedModInitial } from '../../utils/installedModDisplay'
 import { useServerStore } from '../../stores/server'
 import { usePlayitStore } from '../../stores/playit'
@@ -179,6 +180,7 @@ onUnmounted(() => {
 
 <template>
   <div class="overview-page">
+    <InstanceTransfers :key="store.currentServerId" />
     <section class="overview-page__stats" :class="{ 'overview-page__stats--three': !hasContent, 'overview-page__stats--proxy': isVelocity }">
       <StatCard v-if="!isVelocity" :label="$t('overview.stats.players')" :value="store.serverStatus.players.online" :unit="store.serverStatus.players.max ? `/${store.serverStatus.players.max}` : ''" />
       <StatCard :label="$t('overview.stats.uptime')" :value="store.serverStatus.uptime" />

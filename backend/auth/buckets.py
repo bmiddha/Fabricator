@@ -80,6 +80,10 @@ _MANAGE = [
 
 # --- NEVER: no token, either scope ------------------------------------------ #
 _NEVER = [
+    ("GET", "/api/servers/<server_id>/worlds"),
+    ("POST", "/api/servers/<server_id>/transfers/<kind>/preview"),
+    ("POST", "/api/servers/<server_id>/transfers/<kind>"),
+    ("GET", "/api/transfer-jobs/<job_id>"),
     ("POST", "/api/client-pack-shares/download"),
     ("GET", "/api/servers/<server_id>/client-pack/shares"),
     ("POST", "/api/servers/<server_id>/client-pack/exports/<artifact_id>/shares"),

@@ -288,6 +288,21 @@ class ServerProcessRegistry:
         server: Dict[str, object],
         required_java_major: Optional[int] = None
     ) -> Dict[str, object]:
+        from backend.server.locks import try_acquire
+        lock = try_acquire(str(server['id']))
+        if lock is None:
+            return {'status': 'stopped', 'busy': True, 'message': 'Another operation holds the instance lock'}
+        try:
+            return self._start_server_locked(server, required_java_major)
+        finally:
+            lock.release()
+
+    def _start_server_locked(
+        self, server: Dict[str, object], required_java_major: Optional[int] = None,
+    ) -> Dict[str, object]:
+        if ((self.resolve_install_path(server) / '.fabricator-transfer').exists()
+                or (self.base_dir / ('.fork-' + str(server['id']))).exists()):
+            return {'status': 'error', 'message': 'Interrupted world transfer requires recovery before starting'}
         if server.get('loader') == 'velocity' and required_java_major is None and not skip_java_enforcement():
             required_java_major = resolve_required_java(str(server.get('version') or ''), 'velocity').required_java
         try:

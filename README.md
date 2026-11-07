@@ -8,6 +8,7 @@
 - **DNS management** — manage DNS records for Minecraft servers.
 - **S3 backups** — [S3-compatible destinations](deploy/backups/README.md) for saved backup configurations.
 - **Client modpack exports** — [persistent client-only selections, private `.mrpack` downloads and opt-in expiring share links](deploy/client-packs/README.md), combined with exact installed server mod versions.
+- **Instance forks & world copies** — [stopped-only independent server copies and dimension-preserving world transfers](deploy/transfers/README.md), with explicit scope, compatibility checks, mandatory destination safety backups and transactional recovery.
 
 
 <div align="center">

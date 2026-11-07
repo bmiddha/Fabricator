@@ -583,6 +583,7 @@ _SETTINGS_IGNORED_ECHO_FIELDS = frozenset({
     'id', 'createdAt', 'updatedAt', 'runtime',
     'javaCompatibility', 'javaRequirement',
     'kind', 'capabilities', 'loaderVersion',
+    'transferPortsReserved',
 })
 
 _MIN_PORT = 1
@@ -691,6 +692,8 @@ def _port_taken_by_other(port: int, servers: list, exclude_id=None) -> bool:
     for server in servers:
         if exclude_id is not None and server.get('id') == exclude_id:
             continue
+        if server.get('transferPortsReserved') and port in storage.port_values(server, default_game=True):
+            return True
         try:
             existing = _coerce_port(server.get('port', 25565))
         except ValueError:
@@ -822,6 +825,8 @@ def create_server():
     try:
         data['status'] = 'pending'
         return jsonify(_create_server_record(data)), 201
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 409
     except Exception as exc:
         return jsonify({'error': str(exc)}), 500
 
@@ -955,7 +960,10 @@ def import_server():
     if error:
         return jsonify({'error': error}), 400
 
-    server = _create_server_record(record)
+    try:
+        server = _create_server_record(record)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 409
     server_id = server['id']
     install_progress.clear(server_id)
     install_progress.update(server_id, phase='starting', server_id=server_id)
@@ -1592,6 +1600,7 @@ def get_server_icon(server_id, server):
 
 @server_bp.route('/servers/<server_id>/icon', methods=['PUT'])
 @require_server
+@with_server_lock
 def set_server_icon(server_id, server):
     """Turn any image into the 64x64 ``server-icon.png`` Minecraft shows in
     the server list (#85). The raw image is the request body. Non-square images
@@ -1632,6 +1641,7 @@ def set_server_icon(server_id, server):
 
 @server_bp.route('/servers/<server_id>/icon', methods=['DELETE'])
 @require_server
+@with_server_lock
 def delete_server_icon(server_id, server):
     try:
         path = _server_icon_path(server)
@@ -1714,7 +1724,10 @@ def update_server_settings(server_id, server):
     if runtime_status.get('status') in {'running', 'stopping'} or runtime_status.get('stopping'):
         return jsonify({'error': 'Stop the server before changing settings'}), 409
 
-    server = storage.update_server(server_id, data)
+    try:
+        server = storage.update_server(server_id, data)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
 
     if not server:
         return jsonify({'error': 'Server not found'}), 404

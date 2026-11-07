@@ -1,7 +1,7 @@
 <template>
   <Transition name="modal">
     <div v-if="show" class="modal-overlay" @click.self="closeModal">
-      <div class="modal-container" :class="sizeClass">
+      <div ref="dialog" class="modal-container" :class="sizeClass" role="dialog" aria-modal="true" :aria-label="title" tabindex="-1">
         <div class="modal-header">
           <h2>{{ title }}</h2>
           <button class="modal-close" @click="closeModal" :aria-label="$t('common.close')">
@@ -57,6 +57,21 @@ export default {
       if (this.closeOnEscape && event.key === 'Escape' && this.show) {
         this.closeModal();
       }
+      if (event.key === 'Tab' && this.show) {
+        const nodes = [...this.$refs.dialog.querySelectorAll('button, input, select, textarea, a[href], [tabindex]')]
+          .filter(node => !node.matches(':disabled') && node.type !== 'hidden' && node.tabIndex >= 0);
+        const first = nodes[0], last = nodes[nodes.length - 1];
+        if (!first) {
+          event.preventDefault();
+          this.$refs.dialog.focus();
+        } else if (event.shiftKey && (document.activeElement === first || document.activeElement === this.$refs.dialog)) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
     }
   },
   mounted() {
@@ -69,9 +84,12 @@ export default {
     show(newVal) {
       // Prevent body scroll when modal is open
       if (newVal) {
+        this.returnFocus = document.activeElement;
         document.body.style.overflow = 'hidden';
+        this.$nextTick(() => this.$refs.dialog?.focus());
       } else {
         document.body.style.overflow = '';
+        this.returnFocus?.focus?.();
       }
     }
   }

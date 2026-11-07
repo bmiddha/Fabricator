@@ -24,6 +24,12 @@ _rule("POST", "/servers", "servers.create")
 _rule("POST", "/servers/import", "servers.import")
 _rule("POST", "/servers/import/inspect", "servers.import")
 _rule("PUT", "/servers/order", "servers.reorder")
+_server("POST", "/transfers/<kind>/preview", "server.view")
+_server("POST", "/transfers/<kind>", "server.view")
+_server("GET", "/worlds", "worlds.read")
+# These handlers verify both instances, the operation-specific permissions and
+# job ownership before exposing metadata. Generic server.view is insufficient.
+_rule("GET", "/transfer-jobs/<job_id>", target="transfer-job")
 for method, suffix, permission in [
     ("GET", "", "server.view"),
     ("DELETE", "", "server.delete"),
@@ -156,7 +162,7 @@ for path in [
 
 CATALOG = frozenset(
     {"server.settings.read"} | {p for perms, _ in RULES.values() for p in perms}
-    | {"tokens.all.manage"}
+    | {"tokens.all.manage", "server.fork", "worlds.read"}
 )
 GLOBAL = frozenset(
     p for p in CATALOG
@@ -292,6 +298,8 @@ def authorize(user: Principal):
     required, target = rule
     if target == "collection":
         return None
+    if target == "transfer-job":
+        return None  # Ownership and both instance grants checked by handler.
     if target == "tokens":
         return None if any(user.can(p) for p in ("tokens.self.manage", "tokens.all.manage", "mcp.configure")) else _deny()
     if target in {"catalog", "any-server"}:

@@ -172,6 +172,7 @@ def create_server(server_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     with _storage_lock:
         servers = load_servers()
+        _check_transfer_reservations(server_data, servers)
 
         now_iso = iso_z_now()
         new_server = {
@@ -189,6 +190,49 @@ def create_server(server_data: Dict[str, Any]) -> Dict[str, Any]:
         return new_server
 
 
+def port_values(record, *, default_game=False):
+    """Known numeric listeners, tolerating legacy malformed records like routes."""
+    result = set()
+    for key in ('port', 'queryPort', 'rconPort'):
+        raw = record.get(key, 25565 if key == 'port' and default_game else None)
+        try:
+            port = int(raw)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(raw, bool) and 1 <= port <= 65535:
+            result.add(port)
+    return result
+
+
+def _check_transfer_reservations(data, servers, exclude_id=None):
+    """Keep fork-reserved ports unique even against concurrent ordinary creates."""
+    for server in servers:
+        if server.get('id') == exclude_id:
+            continue
+        if not server.get('transferPortsReserved'):
+            continue
+        if port_values(data) & port_values(server, default_game=True):
+            raise ValueError('Port is reserved by another instance')
+
+
+def register_fork(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Publish a complete fork only after its independent directory is verified."""
+    with _storage_lock:
+        servers = load_servers()
+        if any(s.get('id') == record['id'] or str(s.get('name') or '').casefold() == record['name'].casefold()
+               for s in servers):
+            raise ValueError('Instance identity or name is already in use')
+        ports = {record[k] for k in ('port', 'queryPort', 'rconPort')}
+        for server in servers:
+            if port_values(server, default_game=True) & ports:
+                raise ValueError('Allocated port was taken by another instance; retry the fork')
+        now = iso_z_now()
+        result = {**record, 'transferPortsReserved': True, 'createdAt': now, 'updatedAt': now}
+        save_servers([*servers, result])
+        _request_dns_sync()
+        return result
+
+
 def update_server(server_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Update an existing server.
 
@@ -201,6 +245,7 @@ def update_server(server_id: str, updates: Dict[str, Any]) -> Optional[Dict[str,
     """
     with _storage_lock:
         servers = load_servers()
+        _check_transfer_reservations(updates, servers, server_id)
 
         for server in servers:
             if server.get('id') == server_id:
@@ -248,6 +293,7 @@ def update_servers(updates_by_id: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[s
         if set(found) != set(updates_by_id):
             raise ValueError("An affected server no longer exists")
         for server_id, updates in updates_by_id.items():
+            _check_transfer_reservations(updates, servers, server_id)
             found[server_id].update(updates)
             found[server_id]['updatedAt'] = iso_z_now()
         save_servers(servers)

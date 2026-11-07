@@ -13,6 +13,7 @@ Errors are consistently `{"error": "<message>"}`. Anything under `/api` not list
 - [Authentication](#authentication)
 - [Health](#health)
 - [Servers](#servers)
+- [Instance forks and world copies](#instance-forks-and-world-copies)
 - [DNS management](#dns-management)
 - [Server files](#server-files)
 - [Mods](#mods)
@@ -32,6 +33,92 @@ Errors are consistently `{"error": "<message>"}`. Anything under `/api` not list
 - [Worked examples](#worked-examples)
 - [Testing](#testing)
 - [Security notes](#security-notes)
+
+---
+
+## Instance forks and world copies
+
+Experimental, session-authenticated, **unavailable to all MCP API tokens** and
+disabled in managed mode. Both source and destination must already be stopped;
+no endpoint stops the source. See the [operator guide](deploy/transfers/README.md)
+for exact file scope, layout restrictions, trust model and crash recovery.
+
+| Method | Path (prefix `/api`) | Capability / response |
+|---|---|---|
+| GET | `/servers/<source_id>/worlds` | `worlds.read` on source; `{ "worlds": [...] }` with active-group ID/name, directories, dimensions, layout, game version and DataVersion |
+| POST | `/servers/<source_id>/transfers/fork/preview` | `server.fork` + `files.read` + `server.settings.read` on source and global `servers.create`; returns content-bound preview |
+| POST | `/servers/<source_id>/transfers/fork` | Same rights; confirms preview and queues independent instance creation, `202 {"jobId":"..."}` |
+| POST | `/servers/<source_id>/transfers/world-copy/preview` | `worlds.read` on source; `worlds.import` + `backups.create` on destination; returns compatibility/scope preview |
+| POST | `/servers/<source_id>/transfers/world-copy` | Same rights, plus `server.start` on destination if `restart:true`; `202 {"jobId":"..."}` |
+| GET | `/transfer-jobs/<job_id>` | Initiating OIDC owner only, with both instances' current operation grants; phase/byte progress and terminal result/error |
+
+All per-instance capabilities also require `server.view`. A view-only
+principal cannot discover source world metadata, preview or poll another
+user's job. The generic `/backup-jobs/<id>` endpoint rejects transfer jobs.
+Responses use `Cache-Control: no-store`; no roles, routing authority or
+per-server grants are inherited by the new instance.
+
+Fork preview body:
+
+```json
+{
+  "name": "survival-sandbox",
+  "includeWorlds": true,
+  "includePlayerData": false
+}
+```
+
+World-copy preview body:
+
+```json
+{
+  "worldId": "island",
+  "destinationId": "srv_destination",
+  "includePlayerData": false,
+  "restart": false
+}
+```
+
+Booleans are explicit choices, not optional destructive defaults. The world
+ID comes from discovery and identifies a complete dimension group.
+Previews include `previewToken`, `worlds`, `bytes` and `warnings`. World-copy
+previews also include `world`, `destinationWorld`, `replaces`,
+`requiresSafetyBackup` and `layout`; fork previews include fresh-access and
+autostart scope. Preview refusal is `400`, denied operation `403`, hidden or
+foreign job `404`, stale submission token `409`.
+
+Submit to the corresponding non-`/preview` path with the same choices plus:
+
+```json
+{
+  "previewToken": "<current content-bound preview token>",
+  "acknowledgeRisks": true,
+  "confirmReplace": "island"
+}
+```
+
+`confirmReplace` is required only when replacing an initialized destination
+world, and must exactly match `destinationWorld`. The worker revalidates the
+token and all prerequisites after obtaining deterministic instance locks.
+Changes while queued fail rather than using a stale preview.
+
+Poll `/transfer-jobs/<jobId>` until `phase` is `done` or `failed`. Phases:
+`queued`, `safety_snapshot`, `copying` (`copied_bytes`, `total_bytes`),
+`verifying`, `publishing`, optional `restarting`, `done`/`failed`. Fork results
+contain `serverId`, `name`, `port`; world-copy results contain `destinationId`
+and `safetySnapshotId`. Errors after successful publication include
+`published:true`; inspect before retrying. Jobs are not durable across panel
+restarts: missing progress is an unknown outcome, not success.
+
+Supported worlds are Java nested-dimension groups or same-layout Bukkit
+split-dimension groups. World copies require exact game/loader/build matches,
+verifiable world formats, identical mod/plugin jar hashes and, for modded
+loaders, matching `config`/`defaultconfigs`. Vanilla/Bukkit also require
+identical launch-jar hashes. No force-load, version migration,
+layout conversion, arbitrary plugin-world discovery or live-source snapshot
+API is exposed. Source bytes are preserved. Destination non-world
+configuration is unchanged, and a verified local safety backup is mandatory
+before rename-based replacement.
 
 ---
 

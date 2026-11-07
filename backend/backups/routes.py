@@ -408,7 +408,7 @@ def import_world(server_id, server):
 @backups_bp.route("/backup-jobs/<job_id>", methods=["GET"])
 def get_backup_job(job_id):
     payload = progress.get(job_id)
-    if not payload:
+    if not payload or payload.get("kind") in {"fork", "world-copy"}:
         return jsonify({"error": "Job not found"}), 404
     return jsonify({"active": progress.is_active(job_id), **payload})
 
