@@ -923,6 +923,91 @@ registry rejected it (e.g. the server is not running).
 }
 ```
 
+### Performance history and guided profiling
+
+`GET /api/servers/<server_id>/diagnostics?window=1h` requires
+`server.metrics.read` and server visibility. `window` accepts only `1h`, `6h`
+or `24h`. The response contains `samples`, `captures`, `capability`,
+`jvmSampling`, `captureReady` (live process readiness), `intervalSeconds` (30), `retentionSeconds` (86400),
+`samplingEnabled` and `samplingError`. Responses are `Cache-Control: no-store`.
+MCP tokens cannot use these endpoints: report URLs are operational capabilities,
+not public catalog links.
+
+Samples use Unix seconds (`ts`), `running`, and available fields only:
+`tps`, `mspt` (milliseconds/tick), `cpu` (raw process percent, potentially over
+100), `rssBytes`, `heapUsedBytes`, `gcCollections`, `gcTimeMs`,
+`volumeUsedBytes`, `volumeTotalBytes`, and an opaque JVM `run` boundary.
+Missing fields are unavailable, **never implicit zero**. TPS retains the incumbent
+loader-specific semantics (Paper's rolling one-minute figure, Forge overall
+TPS, or vanilla's rate estimated from measured tick cost). MSPT is preserved from
+vanilla-family `tick query` / Forge overall output; modern Paper additionally
+receives `minecraft:tick query` without replacing its rolling TPS. Other runtimes
+remain unavailable. Samples use the latest non-stale TPS/MSPT observation;
+they are not independent instantaneous measurements. This is not a new
+Minecraft plugin or a change to the server's target tick rate.
+
+Disk values describe **used/total filesystem capacity for the server directory**,
+shared with other files on that volume. They are not world size, disk throughput
+or I/O latency. World trees are not scanned during lag. JVM GC counters/time
+are cumulative since JVM start, not interval pause duration or pause percentiles.
+Graphs break at unavailable points, collection gaps and JVM restarts.
+
+`PUT /api/servers/<server_id>/diagnostics/sampling` with
+`{"jvmSampling": true}` explicitly opts into local `jstat -gc` sampling;
+`false` disables it. It requires `diagnostics.manage`. The tool is resolved next
+to the **running server's configured Java binary**, never installed automatically,
+and bounded to two seconds per 30-second collection. Heap used sums the
+young/old-generation used columns in KiB and converts to bytes; metaspace is
+not heap. `GCT` seconds are converted to milliseconds. Unsupported counters,
+collectors, unavailable tooling or attach failures are omitted, with a
+`jvmUnavailable` reason. This does not change the existing opt-in Overview
+`jcmd` heap display preference.
+
+`POST /api/servers/<server_id>/diagnostics/captures` requires
+`diagnostics.manage`, a running ready matching runtime, and body:
+
+```json
+{"durationSeconds": 60, "acceptUpload": true}
+```
+
+Only 60, 120 or 300 seconds are accepted. Missing explicit upload consent,
+unverified runtime, an existing guided capture or a failed command returns
+409; a submitted command returns 202 with status `requested`, **not success**.
+The only issued command is `spark profiler start --timeout <bounded integer>`.
+No plugin/mod installation, automatic restart or runtime upgrade occurs.
+The initial supported capability is precisely released Paper 1.21+ versions
+in the `1.x` numbering scheme, documented to bundle spark:
+[Paper profiling](https://docs.papermc.io/paper/profiling/),
+[spark commands](https://spark.lucko.me/docs/Command-Usage).
+Forks, other loaders, snapshots and unknown/year-numbered versions are not
+inferred compatible. Bundled spark may still be disabled or fail at runtime;
+console acknowledgement and report receipt are tracked independently.
+
+Spark uploads reports to its external service when the timeout ends. Reports
+can contain operational data and anyone holding a report URL may be able to
+view it. This informed consent must be shown before each request. Capture
+records retain only a bounded status, start time, duration and a strictly
+validated `https://spark.lucko.me/<alphanumeric-id>` reference, not report
+contents or raw logs. Links open externally with no referrer; reports are
+never fetched or embedded by Fabricator. Viewers with this server's metrics
+permission may see retained references. Do not share links without review.
+Statuses are `requested`, `running`, `ready`, `failed`, or `interrupted`;
+lost acknowledgement is not proof of failure, and missing reports never
+trigger automatic retries. Interrupted Fabricator tracking cannot stop a
+previously submitted bounded spark command; inspect the server console.
+External report deletion is governed by spark, not local reference retention.
+
+History is sampled without an open browser and persisted alongside the server
+index in `diagnostics.sqlite3`. Retention is 24 hours, at most 2880 samples and
+20 captures per server, with expiry/orphan cleanup each sweep and explicit
+server-deletion cleanup. SQLite reclaims deleted pages. A Fabricator restart
+marks unfinished tracked captures interrupted. Only one guided capture per
+server is tracked concurrently. Set `FABRICATOR_DISABLE_DIAGNOSTICS=1` to
+disable background collection (also used for isolated tests); existing
+retained history remains readable within its window. Sampling failures appear
+in `samplingError` and application logs. These trends correlate measurements;
+they do not automatically diagnose a root cause.
+
 **Error (500):** `psutil` is not installed.
 
 ---

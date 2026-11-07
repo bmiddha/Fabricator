@@ -13,6 +13,11 @@ if str(ROOT) not in sys.path:
 
 
 @pytest.fixture(autouse=True)
+def _disable_background_diagnostics(monkeypatch):
+    monkeypatch.setenv("FABRICATOR_DISABLE_DIAGNOSTICS", "1")
+
+
+@pytest.fixture(autouse=True)
 def _clear_platform_caches():
     """Reset platform-level ``lru_cache``s before each test.
 

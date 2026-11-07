@@ -40,6 +40,9 @@ for method, suffix, permission in [
     ("GET", "", "server.view"),
     ("DELETE", "", "server.delete"),
     ("GET", "/metrics", "server.metrics.read"),
+    ("GET", "/diagnostics", "server.metrics.read"),
+    ("PUT", "/diagnostics/sampling", "diagnostics.manage"),
+    ("POST", "/diagnostics/captures", "diagnostics.manage"),
     ("GET", "/logs", "server.logs.read"),
     ("GET", "/icon", "server.view"),
     ("PUT", "/icon", "server.icon.write"),
@@ -373,7 +376,7 @@ _SERVER_FIELDS = frozenset({
 })
 _RUNTIME_FIELDS = frozenset({
     "status", "running", "cpu", "cpuCores", "ram", "uptime", "players",
-    "tps", "tpsSupported", "loader", "version",
+    "tps", "mspt", "tpsSupported", "loader", "version",
 })
 
 

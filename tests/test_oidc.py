@@ -118,6 +118,37 @@ def test_session_and_grants_are_not_cached_in_cookie(oidc_app):
     assert client.get("/api/auth/status").get_json()["authenticated"] is False
 
 
+def test_diagnostics_follow_live_server_read_and_manage_grants(oidc_app, monkeypatch):
+    from backend.diagnostics import service as diagnostics
+    from backend.server import storage
+    monkeypatch.setattr(storage, "get_server", lambda sid: {"id": sid})
+    read = MagicMock(return_value={"samples": [], "captures": [{"id": "private-reference"}]})
+    capture = MagicMock(return_value={"status": "requested"})
+    monkeypatch.setattr(diagnostics, "overview", read)
+    monkeypatch.setattr(diagnostics, "start_capture", capture)
+    client = oidc_app.test_client()
+    sign_in(client)
+    assert client.get("/api/servers/a/diagnostics").status_code == 200
+    assert client.post("/api/servers/a/diagnostics/captures", json={"acceptUpload": True}).status_code == 403
+    assert client.put("/api/servers/a/diagnostics/sampling", json={"jvmSampling": True}).status_code == 403
+    capture.assert_not_called()
+    sign_in(client, "bob")
+    response = client.get("/api/servers/a/diagnostics")
+    assert response.status_code == 404 and "private-reference" not in response.text
+    read.reset_mock()
+    user = oidc_app.extensions["oidc"].users["alice"]
+    oidc_app.extensions["oidc"].users["alice"] = permissions.Principal(
+        user.subject, user.issuer, user.roles, user.global_permissions,
+        {"a": frozenset({"server.view", "diagnostics.manage"})}, {"a": ()},
+    )
+    sign_in(client)
+    assert client.get("/api/servers/a/diagnostics").status_code == 403
+    assert client.post("/api/servers/a/diagnostics/captures", json={"acceptUpload": True}).status_code == 202
+    read.assert_not_called()
+    del oidc_app.extensions["oidc"].users["alice"]
+    assert client.post("/api/servers/a/diagnostics/captures", json={"acceptUpload": True}).status_code == 401
+
+
 @pytest.mark.parametrize("method,suffix,permission", [
     ("get", "", "map.read"),
     ("post", "/session", "map.read"),

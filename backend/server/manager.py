@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
 from typing import Iterable, List, Optional
 
 from backend.server import tps as tps_probe
@@ -130,6 +131,7 @@ class ServerManager:
         )
         self.cwd = cwd
         self._process: Optional[subprocess.Popen] = None
+        self.diagnostics_run_id = uuid.uuid4().hex
         self._ps_process: Optional["psutil.Process"] = None  # type: ignore[name-defined]
         self._jvm_memory_stats: Optional[JvmMemoryStats] = None
         self._jvm_memory_stats_at: Optional[float] = None
@@ -172,6 +174,8 @@ class ServerManager:
         self._tps_probe: Optional[tps_probe.TpsProbe] = None
         self._tps: Optional[float] = None
         self._tps_at = 0.0  # monotonic; 0.0 = never sampled this run
+        self._mspt: Optional[float] = None
+        self._mspt_at = 0.0
         # Vanilla reports a target rate and a per-tick cost on separate lines;
         # the target from the first is what caps the rate derived from the second.
         self._tps_target_rate = tps_probe.DEFAULT_TICK_RATE
@@ -437,7 +441,18 @@ class ServerManager:
         if kind == tps_probe.NOISE:
             return pending
         if kind == tps_probe.MSPT:
+            with self._lock:
+                self._mspt = value
+                self._mspt_at = time.monotonic()
+            if self._tps_probe.kind == "paper":
+                return pending
             value = tps_probe.rate_from_mspt(value, self._tps_target_rate)
+        elif self._tps_probe.kind == "forge":
+            match = re.search(r"Overall\b.*?Mean tick time:\s*([\d.]+)\s*ms", body)
+            if match:
+                with self._lock:
+                    self._mspt = float(match.group(1))
+                    self._mspt_at = time.monotonic()
 
         with self._lock:
             self._tps = value
@@ -485,6 +500,9 @@ class ServerManager:
                 return
             if answered:
                 misses = 0
+                if self.loader == "paper" and tps_probe._supports_tick_command(self.version or ""):
+                    self._tps_pending_until = time.monotonic() + self.TPS_RESPONSE_TIMEOUT_SEC
+                    self.send_command("minecraft:tick query")
                 continue
 
             misses += 1
@@ -499,6 +517,8 @@ class ServerManager:
     def _start_tps_sampler(self) -> None:
         """Begin sampling, if this loader/version can answer at all."""
         self._tps = None
+        self._mspt = None
+        self._mspt_at = 0.0
         self._tps_at = 0.0
         self._tps_target_rate = tps_probe.DEFAULT_TICK_RATE
         self._tps_pending_until = 0.0
@@ -527,6 +547,7 @@ class ServerManager:
                 text=True,
                 **platform_utils.subprocess_no_window_kwargs(),
             )
+            self.diagnostics_run_id = uuid.uuid4().hex
             self._ps_process = None
             self._start_log_streams()
             time.sleep(0.5)
@@ -721,6 +742,7 @@ class ServerManager:
             status["players"] = {"online": len(self._players)}
             tps_value = self._tps
             tps_at = self._tps_at
+            mspt_value, mspt_at = self._mspt, self._mspt_at
         if running:
             # Whether this server can report a tick rate at all, so the UI can
             # say "n/a" for an old vanilla/Fabric server instead of showing a
@@ -734,7 +756,16 @@ class ServerManager:
                 and (time.monotonic() - tps_at) <= self.TPS_STALE_AFTER_SEC
             ):
                 status["tps"] = round(tps_value, 2)
+            if mspt_value is not None and mspt_at and time.monotonic() - mspt_at <= self.TPS_STALE_AFTER_SEC:
+                status["mspt"] = round(mspt_value, 2)
         return status
+
+    def console_since(self, cursor: Optional[int] = None) -> tuple[int, list[str]]:
+        """Snapshot current-run stdout after a monotonic cursor, never prior runs."""
+        with self._buffer_lock:
+            total = self._stdout_total
+            count = max(0, total - cursor) if cursor is not None else 0
+            return total, [text for _, text in self._stdout_buffer[-count:]] if count else []
 
     @staticmethod
     def _serialize_run_tail(

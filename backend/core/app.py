@@ -22,6 +22,7 @@ from backend.dns.routes import dns_bp
 from backend.velocity.routes import velocity_bp
 from backend.server.transfer_routes import transfers_bp
 from backend.maps.routes import maps_bp
+from backend.diagnostics.routes import diagnostics_bp
 from backend.backups.scheduler import init_scheduler
 
 def get_base_path() -> str:
@@ -70,6 +71,7 @@ def create_app() -> Flask:
     app.register_blueprint(schedules_bp)
     app.register_blueprint(dns_bp)
     app.register_blueprint(maps_bp)
+    app.register_blueprint(diagnostics_bp)
     app.register_blueprint(velocity_bp, url_prefix="/api")
     app.register_blueprint(transfers_bp)
     app.register_blueprint(updates_bp)
@@ -104,6 +106,8 @@ def create_app() -> Flask:
     register_schedule_jobs()
     from backend.dns.service import init_dns
     init_dns()
+    from backend.diagnostics.service import init as init_diagnostics
+    init_diagnostics(app)
 
     @app.route(
         "/api/<path:_>",

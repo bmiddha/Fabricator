@@ -1811,6 +1811,8 @@ def delete_server_route(server_id, server):
     for schedule in server.get('schedules') or []:
         remove_schedule_job(schedule.get('id'))
 
+    from backend.diagnostics.service import delete_state as delete_diagnostics
+    delete_diagnostics(server_id)
     storage.delete_server(server_id)
     velocity_service.delete_secret(server)
     discard_lock(server_id)
@@ -2663,6 +2665,7 @@ def get_server_metrics(server_id, server):
         'ram': runtime.get('ram'),
         'cpu': runtime.get('cpu'),
         'tps': runtime.get('tps'),
+        'mspt': runtime.get('mspt'),
         'tpsSupported': runtime.get('tpsSupported'),
         'pid': runtime.get('pid'),
     }

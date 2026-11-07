@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import StatCard from '../../components/ui/StatCard.vue'
 import Panel from '../../components/ui/Panel.vue'
 import InstanceTransfers from '../../components/InstanceTransfers.vue'
+import PerformanceDiagnostics from '../../components/PerformanceDiagnostics.vue'
 import { installedModDisplayName, installedModInitial } from '../../utils/installedModDisplay'
 import { useServerStore } from '../../stores/server'
 import { usePlayitStore } from '../../stores/playit'
@@ -220,6 +221,8 @@ onUnmounted(() => {
         <span class="overview-page__modpack-version">{{ store.activeModpack.version }}</span>
       </div>
     </Panel>
+
+    <PerformanceDiagnostics v-if="auth.can('server.metrics.read', store.currentServerId)" :key="store.currentServerId" :server-id="store.currentServerId" />
 
     <section class="overview-page__row">
       <div class="overview-page__col">

@@ -46,7 +46,7 @@
 | 🧩 | **Loaders**: Fabric, Quilt, NeoForge, Forge, Paper, Purpur, Folia, Pufferfish, Vanilla | ✅ Available |
 | 📦 | **Mod & plugin management**: install, remove, enable/disable, and browse Modrinth mods and plugins; preview project descriptions from search or installed files; update checks with missing-dependency detection | ✅ Available |
 | 🧰 | **Modpack import**: find popular Modrinth packs, search by name or link, or upload an exported `.mrpack` | ✅ Available |
-| 📋 | **Logs & monitoring**: live log stream, TPS and RAM graphs | ✅ Available |
+| 📋 | **Logs & monitoring**: live console, 24-hour TPS/MSPT, memory/GC and filesystem trends; consented bounded spark captures on verified Paper runtimes | ✅ Available |
 | 📁 | **File explorer & editor**: browse the server tree, search files, and edit configuration files in the panel | ✅ Available |
 | 👥 | **Player management**: online players, player heads, custom actions | ✅ Available |
 | 💾 | **Backups & restore**: manual and scheduled snapshots, restore from any backup | ✅ Available |
@@ -65,7 +65,7 @@
 | 🤖 | **[MCP server](mcp/README.md)**: manage servers from AI clients | ✅ Available |
 | ⌨️ | **CLI**: expanded server and mod management commands | 📋 Planned |
 | 🔄 | **Upgrades for modded loaders** (Fabric, Quilt, NeoForge, Forge) | 📋 Planned |
-| 📊 | **Metrics tab**: CPU, RAM, and usage over time | 📋 Planned |
+| 📊 | **Performance diagnostics**: retained server metrics and guided spark report references in Overview | ✅ Available |
 | 🔐 | **OIDC user roles and permissions** | 🧪 Experimental |
 | ✏️ | **Advanced editor & archived logs** | 📋 Planned |
 | 📥 | **More install targets**: Proxmox VE, CasaOS, Umbrel, Unraid, Coolify/Dokploy | 📋 Planned |
