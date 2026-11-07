@@ -33,13 +33,11 @@ self.addEventListener('fetch', event => {
       })
       item.token = ''
       if (!response.ok) {
-        item.port.postMessage({ error: response.status, retry: response.headers.get('Retry-After') })
+        item.port.postMessage({ error: response.status })
         return new Response('Download unavailable; return to the share page to retry.', { status: response.status })
       }
       item.port.postMessage({ started: true })
-      const headers = new Headers(response.headers)
-      headers.set('Cache-Control', 'no-store')
-      return new Response(response.body, { status: 200, headers })
+      return response
     } catch (_) {
       item.token = ''
       item.port.postMessage({ error: 'network' })

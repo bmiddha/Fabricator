@@ -162,7 +162,18 @@ def test_fail_closed_before_publication(fixture_servers, client, monkeypatch, ca
     assert not list(exports._root().glob("*/*.tmp"))
 
 
-def test_changed_source_and_directory_swap_abort(fixture_servers, client, monkeypatch):
+@pytest.mark.parametrize("name", ["mods", "config", "logs", "backups", "fabricator-world.json"])
+def test_reserved_world_names_do_not_publish_empty_or_conflicting_archives(fixture_servers, client, name):
+    from backend.server import world_exports as exports
+    *_, make = fixture_servers
+    server, _ = make("reserved-name", level=name)
+    response = client.post(endpoint(server["id"]), json={"world_id": name})
+    assert response.status_code == 409
+    assert "conflicts" in response.json["error"]
+    assert not list(exports._root().glob("*/*.tar.gz"))
+
+
+def test_changed_source_aborts(fixture_servers, client, monkeypatch):
     from backend.server import world_exports as exports
     _, _, _, _, root, _, _, _ = fixture_servers
     original_hash = exports._hash
@@ -302,6 +313,20 @@ def test_metadata_corruption_and_pinned_capacity_fail_explicitly(fixture_servers
     path.write_text("[]")
     assert client.get(endpoint()).status_code == 409
     assert redeem(client, pinned[-1]).status_code == 503
+
+
+@pytest.mark.parametrize("field,value", [
+    ("sha256", None), ("created_at", None), ("created_at", float("nan")), ("world", []),
+])
+def test_corrupt_metadata_fields_are_reported_not_unhandled(fixture_servers, client, field, value):
+    from backend.server import world_exports as exports
+    metadata = export(client)
+    link = share(client, metadata)
+    path = exports.artifact_metadata_path(exports.artifact_path({"id": "source"}, metadata["id"])[0])
+    path.write_text(json.dumps({**metadata, field: value}))
+    assert client.get(endpoint()).status_code == 409
+    assert client.get(endpoint() + f'/{metadata["id"]}/download').status_code == 409
+    assert redeem(client, link).status_code == 503
 
 
 @pytest.mark.parametrize("method,suffix,permission", [

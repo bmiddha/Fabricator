@@ -36,6 +36,7 @@ MAX_SETTING_BYTES = 256 * 1024
 MAX_SOURCE_BYTES = 8 * 1024 * 1024
 MAX_FILES = 2000
 ARTIFACT_TTL = 24 * 3600
+SHARE_PAGE = "/client-pack-share"
 MAX_ARTIFACTS = 5
 MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
 CLIENT_TAGS = {
@@ -827,6 +828,10 @@ def artifact_path(server, artifact_id):
     if not path.is_file() or path.is_symlink():
         raise FileNotFoundError("Export expired or not found; generate a new archive")
     return path, _read(path.with_suffix(".json"), {})
+
+
+def artifact_metadata_path(path):
+    return path.with_suffix(".json")
 
 
 def delete_state(server, install_path=None):

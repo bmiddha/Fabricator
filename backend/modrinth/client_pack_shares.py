@@ -68,7 +68,7 @@ def create(server, artifact_id, ttl, owner, store=packs):
         "created_at": now, "expires_at": now + ttl,
     }
     store._atomic_json(_path(server, store), [*records, record])
-    return {**public(record), "url": getattr(store, "SHARE_PAGE", "/client-pack-share") + "#" + token}
+    return {**public(record), "url": store.SHARE_PAGE + "#" + token}
 
 
 def revoke(server, share_id, owner, store=packs):
@@ -102,5 +102,4 @@ def remove_artifact(server, artifact_id, *, confirmed=False, store=packs):
     path, _ = store.artifact_path(server, artifact_id)
     store._atomic_json(_path(server, store), [record for record in records if record["artifact_id"] != artifact_id])
     path.unlink()
-    metadata_path = getattr(store, "artifact_metadata_path", lambda p: p.with_suffix(".json"))
-    metadata_path(path).unlink(missing_ok=True)
+    store.artifact_metadata_path(path).unlink(missing_ok=True)

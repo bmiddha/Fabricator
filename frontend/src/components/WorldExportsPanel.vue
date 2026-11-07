@@ -13,12 +13,14 @@ const props = defineProps({ serverId: String, server: Object })
 const can = useCapabilities()
 const base = computed(() => `/api/servers/${encodeURIComponent(props.serverId)}`)
 const stopped = computed(() => props.server?.status === 'stopped')
+const canExport = computed(() => can('worlds.read') && can('worlds.export'))
 const shareable = computed(() => can('worlds.share') && can('worlds.download'))
 const expanded = ref(false)
 const busy = ref(false)
 const error = ref('')
 const groups = ref([])
 const selected = ref('')
+const selectedWorld = computed(() => groups.value.find(group => group.id === selected.value))
 const artifacts = ref([])
 const links = ref([])
 const shareTarget = ref('')
@@ -30,9 +32,13 @@ const confirmation = ref(null)
 let generation = 0
 
 async function operation(fn) {
+  if (busy.value) return
+  const current = generation
   busy.value = true
   error.value = ''
-  try { await fn() } catch (e) { error.value = e.message } finally { busy.value = false }
+  try { await fn() }
+  catch (e) { if (current === generation) error.value = e.message }
+  finally { if (current === generation) busy.value = false }
 }
 async function refresh() {
   const current = generation
@@ -45,7 +51,7 @@ async function refresh() {
   links.value = shareResult.shares
   if (!artifacts.value.some(a => a.id === shareTarget.value)) shareTarget.value = ''
   groups.value = []
-  const worldResult = can('worlds.read') && can('worlds.export') && stopped.value
+  const worldResult = canExport.value && stopped.value
     ? await get(`${url}/worlds`) : { worlds: [] }
   if (current !== generation) return
   groups.value = worldResult.worlds
@@ -83,15 +89,16 @@ async function copy() {
   else error.value = t('worldExports.copyFailed')
 }
 async function confirm() {
+  const current = generation
   await operation(async () => {
     const target = confirmation.value
     if (target.kind === 'delete') {
       await del(`${base.value}/world-exports/${target.id}`, { confirm_shared: true })
-      if (newLink.value?.artifact_id === target.id) newLink.value = null
     } else {
       await del(`${base.value}/world-export-shares/${target.id}`)
-      if (newLink.value?.id === target.id) newLink.value = null
     }
+    if (current !== generation) return
+    if (newLink.value?.artifact_id === target.id || newLink.value?.id === target.id) newLink.value = null
     confirmation.value = null
     await refresh()
   })
@@ -107,6 +114,7 @@ watch(() => props.serverId, () => {
   shareTarget.value = ''
   newLink.value = null
   confirmation.value = null
+  busy.value = false
   error.value = ''
 })
 </script>
@@ -125,19 +133,19 @@ watch(() => props.serverId, () => {
       <template v-if="expanded">
         <p>{{ $t('worldExports.stopped') }}</p>
         <p>{{ $t('worldExports.contents') }}</p>
-        <form v-if="can('worlds.read') && can('worlds.export')" class="world-exports__actions" @submit.prevent="build">
+        <form v-if="canExport" class="world-exports__actions" @submit.prevent="build">
           <label for="export-world">{{ $t('worldExports.group') }}
             <select id="export-world" v-model="selected" :disabled="busy || !stopped">
               <option value="">{{ $t('worldExports.choose') }}</option>
               <option v-for="group in groups" :key="group.id" :value="group.id">{{ group.name }}</option>
             </select>
           </label>
-          <AppButton type="submit" :disabled="busy || !stopped || !selected">{{ $t('worldExports.build') }}</AppButton>
+          <AppButton type="submit" :disabled="busy || !stopped || !selectedWorld">{{ $t('worldExports.build') }}</AppButton>
         </form>
-        <p v-if="stopped && can('worlds.export') && !groups.length">{{ $t('worldExports.noWorlds') }}</p>
-        <p v-for="group in groups.filter(g => g.id === selected)" :key="group.id">
-          {{ group.layout }} · {{ group.version }} · {{ group.directories.join(', ') }}
-          <span v-if="group.dimensions.length"> · {{ group.dimensions.join(', ') }}</span>
+        <p v-if="stopped && canExport && !busy && !error && !groups.length">{{ $t('worldExports.noWorlds') }}</p>
+        <p v-if="selectedWorld">
+          {{ selectedWorld.layout }} · {{ selectedWorld.version }} · {{ selectedWorld.directories.join(', ') }}
+          <span v-if="selectedWorld.dimensions.length"> · {{ selectedWorld.dimensions.join(', ') }}</span>
         </p>
         <div class="world-exports__actions">
           <h3>{{ $t('worldExports.archives') }}</h3>
@@ -207,7 +215,7 @@ watch(() => props.serverId, () => {
 .world-exports__actions, .world-exports__archive { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
 .world-exports__archive { justify-content: space-between; padding-block: var(--space-3); border-bottom: 1px solid var(--border-color); }
 .world-exports__archive > div:first-child { flex: 1; min-width: min(240px, 100%); }
-.world-exports__review { display: grid; gap: var(--space-3); padding: var(--space-4); background: var(--bg-tertiary); border-radius: var(--radius-sm); }
+.world-exports__review { display: grid; gap: var(--space-3); padding-top: var(--space-4); border-top: 1px solid var(--border-color); }
 .world-exports label { display: grid; gap: var(--space-2); }
 .world-exports input:not([type=checkbox]), .world-exports select { min-width: 0; width: 100%; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-color); border-radius: var(--radius-sm); }
 .world-exports__check { display: flex !important; align-items: start; }

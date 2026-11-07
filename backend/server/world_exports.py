@@ -5,8 +5,9 @@ from contextlib import contextmanager
 import hashlib
 import io
 import json
+import math
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 import re
 import stat
 import tarfile
@@ -130,6 +131,8 @@ def _scan(server, root, group_id):
     selected = next((g for g in groups if g["id"] == group_id), None)
     if selected is None:
         raise PackError("Select a supported world group; individual dimensions cannot be exported")
+    if any(_skip(name) or name == "fabricator-world.json" for name in selected["directories"]):
+        raise PackError("World directory conflicts with excluded content or the archive manifest")
     for dimension in selected["dimensions"]:
         rel = dimension if selected["layout"] == "bukkit-split" else selected["id"] + "/" + dimension
         if not (root / rel).is_dir() or (root / rel).is_symlink():
@@ -208,8 +211,13 @@ def artifact_path(server, artifact_id, sweep=True):
     metadata = _read(directory / f"{artifact_id}.json", {})
     if (not isinstance(metadata, dict)
             or metadata.get("id") != artifact_id or type(metadata.get("size")) is not int
-            or metadata["size"] != path.stat().st_size
+            or metadata["size"] < 0 or metadata["size"] != path.stat().st_size
+            or not isinstance(metadata.get("sha256"), str)
             or not re.fullmatch(r"[a-f0-9]{64}", metadata.get("sha256", ""))
+            or type(metadata.get("created_at")) not in (int, float)
+            or not math.isfinite(metadata["created_at"])
+            or not isinstance(metadata.get("world"), dict)
+            or not isinstance(metadata["world"].get("name"), str)
             or metadata.get("filename") != f"world-{artifact_id[:12]}.tar.gz"):
         raise PackError("Invalid world archive metadata; check storage")
     return path, metadata
@@ -230,11 +238,12 @@ def build(server, group_id):
         if total > limit:
             raise PackError("World exceeds FABRICATOR_MAX_WORLD_EXPORT_BYTES")
         directory = _sweep(server, reserve=True)
-        # gzip may expand incompressible input; allow headers and a 64 MiB reserve.
-        transfers._space(directory, total + len(entries) * 2048 + total // 100 + 1024**2)
+        # Reserve space for gzip expansion and per-entry tar headers.
+        required = total + len(entries) * 2048 + total // 100 + 1024**2
+        transfers._space(directory, required)
         quota = env_max_bytes("FABRICATOR_WORLD_EXPORT_STORAGE_BYTES", 200 * 1024**3)
         used = sum(p.stat().st_size for p in _root().glob("*/*.tar.gz"))
-        if used + total + len(entries) * 2048 + total // 100 + 1024**2 > quota:
+        if used + required > quota:
             raise PackError("World archive storage quota exceeded; delete retained exports")
         expected = _manifest(root, entries)
         artifact_id = uuid.uuid4().hex

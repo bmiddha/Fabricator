@@ -27,29 +27,24 @@ async function download() {
   error.value = ''
   started.value = false
   try {
-    const registration = await navigator.serviceWorker.register('/world-download-worker.js', { scope: '/world-' })
-    const worker = registration.active || registration.installing || registration.waiting
-    if (!worker) throw new Error(t('worldExports.downloadFailed'))
-    if (worker.state !== 'activated') {
-      await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error(t('worldExports.downloadFailed'))), 15000)
-        worker.addEventListener('statechange', () => {
-          if (worker.state === 'activated') { clearTimeout(timeout); resolve() }
-          if (worker.state === 'redundant') { clearTimeout(timeout); reject(new Error(t('worldExports.downloadFailed'))) }
-        })
-      })
-    }
+    await navigator.serviceWorker.register('/world-download-worker.js', { scope: '/world-' })
     if (!navigator.serviceWorker.controller) {
       await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error(t('worldExports.downloadFailed'))), 15000)
-        navigator.serviceWorker.addEventListener('controllerchange', () => {
+        function ready() {
           clearTimeout(timeout)
           resolve()
-        }, { once: true })
+        }
+        const timeout = setTimeout(() => {
+          navigator.serviceWorker.removeEventListener('controllerchange', ready)
+          reject(new Error(t('worldExports.downloadFailed')))
+        }, 15000)
+        navigator.serviceWorker.addEventListener('controllerchange', ready, { once: true })
       })
     }
+    if (!token) return
     const path = `/world-download-stream/${crypto.randomUUID()}`
     channel?.port1.close()
+    clearTimeout(timer)
     channel = new MessageChannel()
     timer = setTimeout(() => { error.value = t('worldExports.downloadFailed'); busy.value = false }, 30000)
     channel.port1.onmessage = ({ data }) => {
@@ -69,7 +64,7 @@ async function download() {
             ? t('worldExports.limited') : t('worldExports.downloadFailed')
       }
     }
-    worker.postMessage({ path, token }, [channel.port2])
+    navigator.serviceWorker.controller.postMessage({ path, token }, [channel.port2])
   } catch (e) {
     busy.value = false
     error.value = e.message

@@ -29,7 +29,7 @@ const vite = await createServer({
     },
   }],
 })
-const { createApp, h, nextTick } = await import('vue')
+const { createApp, h, nextTick, ref } = await import('vue')
 const { createPinia } = await import('pinia')
 const { routerKey, routeLocationKey } = await import('vue-router')
 const { i18n } = await vite.ssrLoadModule('/src/i18n.js')
@@ -54,7 +54,8 @@ async function settle() {
 }
 const button = name => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === name)
 function mount(permissions, status = 'stopped', component = Panel) {
-  const app = createApp({ render: () => h(component, { serverId: 'source', server: { status } }) })
+  const props = ref({ serverId: 'source', server: { status } })
+  const app = createApp({ render: () => h(component, props.value) })
   app.use(createPinia())
   app.use(i18n)
   app.provide(routerKey, {})
@@ -69,6 +70,7 @@ function mount(permissions, status = 'stopped', component = Panel) {
   document.body.append(root)
   app.mount(root)
   apps.push(app)
+  return props
 }
 const artifact = { id: 'a'.repeat(32), world: { name: 'island' }, created_at: 1700000000,
   size: 20000000, sha256: 'b'.repeat(64), active_shares: 0 }
@@ -86,7 +88,7 @@ test('download-only users never inspect live worlds or expose export/share actio
   assert.equal(document.querySelector('a').getAttribute('href'), `/api/servers/source/world-exports/${artifact.id}/download`)
   assert.equal(button('Export world archive'), undefined)
   assert.equal(button('Review & share'), undefined)
-  assert.match(document.body.textContent, /not anonymization/)
+  assert.match(document.body.textContent, /not anonymized or guaranteed secret-free/)
 })
 
 test('running-server export is disabled and does not discover live worlds', async () => {
@@ -95,7 +97,7 @@ test('running-server export is disabled and does not discover live worlds', asyn
   button('Open world downloads').click()
   await settle()
   assert(button('Export world archive').disabled)
-  assert.match(document.body.textContent, /Stop this instance/)
+  assert.match(document.body.textContent, /POSIX host and a stopped instance, including external file writers/)
 })
 
 test('sharing requires explicit privacy review and shows failures', async () => {
@@ -150,4 +152,29 @@ test('retained downloads remain visible if live world discovery refuses the curr
   assert.equal(document.querySelector('a').getAttribute('href'), `/api/servers/source/world-exports/${artifact.id}/download`)
   assert.match(document.querySelector('[role=alert]').textContent, /unsupported dimensions/)
   assert(button('Export world archive').disabled)
+})
+
+test('switching servers discards stale errors without unlocking a new request', async () => {
+  let rejectSource
+  let resolveDestination
+  globalThis.fetch = url => new Promise((resolve, reject) => {
+    if (url === '/api/servers/source/world-exports') rejectSource = reject
+    else if (url === '/api/servers/destination/world-exports') resolveDestination = resolve
+    else reject(new Error(`Unexpected request: ${url}`))
+  })
+  const props = mount(['worlds.download'])
+  button('Open world downloads').click()
+  await settle()
+  props.value = { serverId: 'destination', server: { status: 'stopped' } }
+  await settle()
+  button('Open world downloads').click()
+  await settle()
+  rejectSource(new Error('stale source failure'))
+  await settle()
+  assert(button('Hide world downloads').disabled)
+  assert.equal(document.querySelector('[role=alert]'), null)
+  resolveDestination(Response.json({ exports: [artifact] }))
+  await settle()
+  assert(!button('Hide world downloads').disabled)
+  assert.equal(document.querySelector('a').getAttribute('href'), `/api/servers/destination/world-exports/${artifact.id}/download`)
 })

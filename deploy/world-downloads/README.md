@@ -1,23 +1,18 @@
 # World downloads (experimental)
 
-Open **Backups → World downloads** on a Java instance. Export is supported on
-POSIX hosts (Linux, macOS and Linux containers); race-safe Windows export is
-not implemented and is explicitly refused. Managed mode and proxies cannot
-generate world archives. No separate public distributor, deployment, live
-snapshot or automatic server stop is provided.
+Open **Backups → World downloads** on a Java instance. Export requires a POSIX
+host (Linux, macOS or Linux containers). Windows, managed mode and proxies are
+not supported. No live snapshot or automatic server stop is provided.
 
-1. Stop the instance in Fabricator. Also stop external JVMs and external
-   filesystem writers; Fabricator cannot control them. Select a discovered
-   **complete world group**, then **Export world archive**.
-2. Download and inspect the private archive, including sensitive world data
-   and game/mod compatibility. Generation preserves the source and never
-   starts/stops a server. Existing archives can be downloaded while it runs.
-3. **Review & share** explicitly acknowledges privacy risk and creates a
-   bearer link expiring in 1 hour to 7 days. Copy the link immediately:
-   only its SHA-256 token hash is persisted; the secret cannot be retrieved.
-4. Revoke links or delete an archive (with confirmation if shared) to block
-   future requests. Expiration, server deletion and artifact deletion
-   invalidate access. Already-downloaded and in-flight bytes cannot be recalled.
+1. Stop the instance and external file writers. Select a **complete world group**
+   and **Export world archive**. The source is unchanged.
+2. Inspect the private download for sensitive data and compatibility.
+3. **Review & share** requires privacy consent. Links expire in 1 hour to 7 days.
+   Copy immediately: only the token hash is stored, never the retrievable secret.
+4. Revocation, expiry, artifact deletion or server deletion blocks new requests.
+   Already-downloaded and in-flight bytes cannot be recalled.
+
+Existing archives remain downloadable while the instance runs.
 
 ## Exact content and compatibility
 
@@ -87,11 +82,11 @@ Components ending in `.jar`, `.jar.disabled`, `.log`, `.secret`, `.lck`, or
 starting with `.fabricator-` / `.env.` are also excluded. Datapacks (including
 ZIP datapacks), integral saved mod data, player inventories, advancements,
 stats, entities, coordinates, signs and books otherwise remain byte-exact.
-A discovered dimension overlapping exclusions blocks export. A mod that
-stores integral data under another reserved directory needs manual migration;
-do not assume it is portable. Symlinks, hardlinks, special files, nested mount
-points, unsafe names, paths longer than 240 characters and aliased directories
-are refused. No arbitrary source path API exists.
+World or dimension names overlapping exclusions, or a world named
+`fabricator-world.json`, block export. Mods using reserved directories need
+manual migration. Symlinks, hardlinks, special files, nested mount points,
+unsafe names, paths longer than 240 characters and aliased directories are
+refused. No arbitrary source path API exists.
 
 **World data is neither anonymized nor guaranteed secret-free.** It may contain
 player identities, private locations, books/signs and credentials or private
@@ -117,31 +112,23 @@ one immutable archive and never authorize server/world changes, filesystem
 browsing, administrative APIs or another archive. Client-pack tokens and
 world tokens use separate state stores and cannot be interchanged.
 
-Recipients need HTTPS and a browser with service workers enabled (localhost
-also works). A worker scoped to the `/world-` prefix (the share page and its
-local download bridge, not dashboard/admin routes) bridges the
-cookie-free POST stream to the browser's native download manager, without
-buffering an archive into a Blob or persisting it in a cache. Its one-use
-local random download URL contains **no bearer token**; it expires after
-60 seconds and is not an anonymous network API. Browser privacy modes or
-policies disabling workers may require opening the link in a supported
-browser. Download completion/progress is shown by the browser, not inferred
-from receiving HTTP headers. There is no range/resume support; a fresh retry
-must pass current grant checks.
+Recipients need HTTPS (or localhost) and service workers enabled. A worker
+scoped to `/world-`, not dashboard/admin routes, streams the cookie-free POST
+to the browser download manager without Blob buffering or caching. Its
+one-use local URL contains **no token**, expires after 60 seconds and is not
+a public network API. The browser shows progress/completion. There is no
+range/resume support; retries must pass current grant checks.
 
 ## Storage, locking, recovery and deployment limits
 
 Archives and share metadata live in
 `<server-index-parent>/world-exports/<sha256-server-id>/`, outside the live
-instance. Artifacts are private immutable files. One generation at a time
-per backend process holds the existing server lock across discovery, source
-hashing, streamed tar/gzip creation, streamed verification, source recheck and
-atomic publication. All per-server panel operations using that lock (including
-power/transfer/backup/file changes) serialize with export. External filesystem
-writers remain outside this guarantee and must be stopped. Generation verifies
-every archive file against the initial and final source manifests; detected
-changes or I/O failures publish nothing. Downloads open a fixed archive handle
-under the lock; later cleanup cannot switch its bytes.
+instance. One generation per backend process holds the server lock through
+discovery, source hashing, streamed creation/verification and atomic publication.
+Power, transfer, backup and file operations using that lock serialize with export.
+External writers must be stopped. Files are checked against initial and final
+source manifests; detected changes or I/O failures publish nothing. Downloads
+open a fixed handle under the lock, so cleanup cannot switch their bytes.
 
 Five archives are retained per server. Unshared artifacts expire after 24 hours
 and oldest slots are reclaimed on generation. Active links pin retention;
@@ -160,14 +147,12 @@ external writers can exhaust disk after it; resulting I/O errors are surfaced
 and temporary files cleaned up. Budget storage separately from S3 backups;
 world exports are local, not automatically uploaded to S3.
 
-There are four simultaneous streamed world downloads per process and a global
-anonymous redemption limit of 30 requests/minute, including invalid requests;
-the token JSON body is bounded to 512 bytes. `429` has `Retry-After`; exhausted
-download slots return `503`. These bounds are not a bandwidth budget,
-per-recipient fairness mechanism or internet DDoS protection. Use deliberate
-HTTPS reverse-proxy rate/connection/bandwidth controls. Deploy a single backend
-process: existing server locks and these limits are process-local, not
-multi-worker/distributed locks. Do not run multiple backends against this state.
+Downloads are limited to four concurrent streams and 30 anonymous requests/minute
+per process, including invalid requests. Token bodies are capped at 512 bytes.
+Throttling returns `429` with `Retry-After`; busy streams return `503`.
+These limits are not bandwidth controls or DDoS protection. Configure proxy
+rate, connection and bandwidth limits. Use **one backend process**: server locks
+and these limits are not distributed.
 
 Generation is synchronous; configure proxy/WSGI request and download timeouts
 for large worlds and avoid response buffering/disk spooling. If the UI loses
@@ -186,21 +171,14 @@ holders can redistribute downloaded world data; no DRM/recall is possible.
 
 ## Fixture verification
 
-`pytest -q tests/test_world_exports.py` covers real archive contents for all
-supported loaders, large streamed bytes, source changes, unsafe paths,
-retention/pins, interrupted metadata cleanup, expiry/revocation/deletion,
-cross-artifact isolation and OIDC permissions. No live game server is started.
-Run the related client-pack, transfer, OIDC and route-bucket suites when changing
-the shared grant provider.
+Run `pytest -q tests/test_world_exports.py` for archives, grants, recovery and
+OIDC checks; include client-pack/transfer/route-bucket suites when changing
+shared primitives. UI checks use `npm --prefix frontend run build` and
+`node --test frontend/src/components/WorldExportsPanel.test.js`.
 
-`npm --prefix frontend run build` and
-`node --test frontend/src/components/WorldExportsPanel.test.js` cover the UI.
-Optional browser acceptance uses the Python `playwright` package with its
-Chromium engine: after building, run
-`pytest -q tests/test_world_exports_browser.py`. It uses a temporary localhost
-Flask server and synthetic world data, checks a native >16 MiB exact-byte
-download with ambient cookies omitted and captures desktop/mobile states.
-Without Playwright or the built frontend, that optional test skips. Set
-`FABRICATOR_BROWSER_ARTIFACTS` to retain its synthetic screenshots outside the
-test temporary directory. Chromium is the browser exercised by this check;
-other browser/privacy-policy combinations need deployment acceptance.
+After building, `pytest -q tests/test_world_exports_browser.py` checks a native
+>16 MiB exact-byte download with cookies omitted and desktop/mobile states.
+It uses synthetic worlds on localhost, never a live game server, and skips
+without Python Playwright/Chromium or the frontend build. Set
+`FABRICATOR_BROWSER_ARTIFACTS` to retain screenshots. Other browsers and privacy
+policies need deployment acceptance.
