@@ -8,6 +8,7 @@
 - **DNS management** — manage DNS records for Minecraft servers.
 - **S3 backups** — [S3-compatible destinations](deploy/backups/README.md) for saved backup configurations.
 - **Client modpack exports** — [persistent client-only selections, private `.mrpack` downloads and opt-in expiring share links](deploy/client-packs/README.md), combined with exact installed server mod versions.
+- **Private live maps** — [BlueMap viewer and global-only Balm Waystones markers](deploy/maps/README.md), initially scoped to COBBLEVERSE 1.7.42 (Fabric 1.21.1). Explicit setup, resource-download consent and an operator-controlled restart are required; full live game-server acceptance is still pending.
 
 
 <div align="center">

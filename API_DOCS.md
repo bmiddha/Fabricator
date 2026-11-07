@@ -17,6 +17,7 @@ Errors are consistently `{"error": "<message>"}`. Anything under `/api` not list
 - [Server files](#server-files)
 - [Mods](#mods)
 - [Client modpack exports](#client-modpack-exports)
+- [Private BlueMap maps](#private-bluemap-maps)
 - [Console & metrics](#console--metrics)
 - [Loader versions](#loader-versions)
 - [Java management](#java-management)
@@ -34,6 +35,32 @@ Errors are consistently `{"error": "<message>"}`. Anything under `/api` not list
 - [Security notes](#security-notes)
 
 ---
+
+## Private BlueMap maps
+
+Experimental, exact-version-scoped integration; see the
+[operator guide and support matrix](deploy/maps/README.md). Management uses the
+normal session gate and is unavailable to MCP tokens. Each OIDC operation also
+requires `server.view` on the target server.
+
+| Method | Path (prefix `/api/servers/<server_id>/map`) | Capability | Request / response |
+|---|---|---|---|
+| GET | empty suffix | `map.read` | `enabled`, `configured`, `ready`, compatibility/dependency `preview`, readiness `message` and global-waystone count when ready |
+| POST | `/install-bluemap` | `map.manage` + `mods.install` | Explicit pinned, integrity-verified BlueMap Fabric install; stopped compatible server only; `201` with `restart_required` |
+| POST | `/setup` | `map.manage` | `{ "accept_resource_download": true }`; stopped server and exact dependencies required; preserve existing configs; `201` with `restart_required` |
+| PUT | `/enabled` | `map.manage` | `{ "enabled": true/false }`; enable requires valid existing config/dependencies; disable immediately blocks map resources but does not stop rendering |
+| POST | `/session` | `map.read` | Fresh process-bound adapter heartbeat required; returns relative viewer `url` and `expires_in: 300` |
+| GET / HEAD | `/view/<ticket>/` and `/view/<ticket>/<path>` | Map-only capability | Read-only isolated viewer/assets/tiles/live JSON; no session cookies needed; owner/grants, server scope, enable state and heartbeat rechecked |
+
+All responses are `no-store` / `no-referrer`. Resources use an opaque CSP/iframe
+sandbox and non-credentialed `Origin: null` CORS, not an unrestricted admin-origin
+iframe. The resource handler is the only narrow capability-auth exception;
+it does not make map resources public. Invalid/expired/revoked capabilities
+return `401`, inaccessible/disabled servers `404`, incompatible/not-ready/config
+conflicts `409`, invalid enable payload `400`, invalid upstream JSON `502`.
+Readiness GET returns `ready: false` with an actionable message for a temporarily
+unavailable configured map. No endpoint restarts a server or accepts an upstream
+URL. Live transport is BlueMap's existing HTTP polling, not a WebSocket.
 
 ## Client modpack exports
 

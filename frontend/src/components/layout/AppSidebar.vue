@@ -81,6 +81,7 @@ const ALL_NAV_ITEMS = [
   { name: 'ServerOverview', label: 'nav.overview',   icon: 'overview' },
   { name: 'ServerConsole',  label: 'nav.console',    icon: 'console'  },
   { name: 'ServerPlayers',  label: 'nav.players',    icon: 'players'  },
+  { name: 'ServerMap', label: 'maps.title', icon: 'network' },
   { name: 'ServerMods',     label: null,             icon: 'mods'     },
   { name: 'ServerFiles',    label: 'nav.files',      icon: 'files'    },
   { name: 'ServerBackups',  label: 'nav.backups',    icon: 'backups'  },
@@ -91,7 +92,7 @@ const ALL_NAV_ITEMS = [
 
 // Nav entries hidden under managed mode (surfaces the fleet gate denies).
 const MANAGED_HIDDEN_NAV = new Set(['ServerBackups', 'ServerPlayit'])
-const PROXY_HIDDEN_NAV = new Set(['ServerPlayers', 'ServerBackups'])
+const PROXY_HIDDEN_NAV = new Set(['ServerPlayers', 'ServerBackups', 'ServerMap'])
 
 // The add-on tab (ServerMods) is hidden for Vanilla (no add-on surface) and
 // relabelled "Plugins" for Bukkit-family loaders (Paper/Purpur/Folia/Pufferfish),

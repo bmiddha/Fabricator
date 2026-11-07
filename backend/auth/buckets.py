@@ -80,6 +80,13 @@ _MANAGE = [
 
 # --- NEVER: no token, either scope ------------------------------------------ #
 _NEVER = [
+    ("GET", "/api/servers/<server_id>/map"),
+    ("POST", "/api/servers/<server_id>/map/session"),
+    ("POST", "/api/servers/<server_id>/map/setup"),
+    ("POST", "/api/servers/<server_id>/map/install-bluemap"),
+    ("PUT", "/api/servers/<server_id>/map/enabled"),
+    ("GET", "/api/servers/<server_id>/map/view/<ticket>/"),
+    ("GET", "/api/servers/<server_id>/map/view/<ticket>/<path:path>"),
     ("POST", "/api/client-pack-shares/download"),
     ("GET", "/api/servers/<server_id>/client-pack/shares"),
     ("POST", "/api/servers/<server_id>/client-pack/exports/<artifact_id>/shares"),

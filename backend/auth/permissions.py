@@ -33,6 +33,10 @@ for method, suffix, permission in [
     ("PUT", "/icon", "server.icon.write"),
     ("DELETE", "/icon", "server.icon.write"),
     ("GET", "/java-status", "server.view"),
+    ("GET", "/map", "map.read"),
+    ("POST", "/map/session", "map.read"),
+    ("POST", "/map/setup", "map.manage"),
+    ("PUT", "/map/enabled", "map.manage"),
     ("GET", "/dns", "dns.manage"),
     ("PUT", "/dns", "dns.manage"),
     ("GET", "/velocity/config", "server.settings.read"),
@@ -88,6 +92,7 @@ for method, suffix, permission in [
     ("DELETE", "/players/known", "players.known.delete"),
 ]:
     _server(method, suffix, permission)
+_server("POST", "/map/install-bluemap", "map.manage", "mods.install")
 for method, suffix in [
     ("GET", "/client-pack/shares"),
     ("POST", "/client-pack/exports/<artifact_id>/shares"),

@@ -212,6 +212,8 @@ def enable_password():
 @auth_bp.route("/logout", methods=["POST"])
 def logout():
     # Reaching here means the gate already let us through (logout is protected).
+    from backend.maps.service import revoke_browser_tickets
+    revoke_browser_tickets()
     session.clear()
     return jsonify({"authenticated": False}), 200
 
