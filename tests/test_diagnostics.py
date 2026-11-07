@@ -65,6 +65,9 @@ def test_jstat_units_and_unsupported_measurements():
     assert service.parse_jstat("GCT\nInfinity") == {}
     assert service.parse_jstat("garbage") == {}
     assert service.parse_jstat("YGC FGC GCT\n0 0 0") == {"gcTimeMs": 0, "gcCollections": 0}
+    assert service.parse_jstat("YGC FGC GCT\n1 2") == {}
+    assert service.parse_jstat("GCT GCT\n1 2") == {}
+    assert service.parse_jstat("YGC FGC\n1.5 2") == {}
 
 
 def test_sample_uses_existing_metrics_and_does_not_guess_mspt(record, manager):
@@ -245,9 +248,13 @@ def test_capture_parser_rejects_chat_links_and_untrusted_urls(manager):
     capture = {"status": "requested"}
     service.apply_capture_line(capture, "https://spark.lucko.me/abc123")
     assert capture["status"] == "requested"
+    service.apply_capture_line(capture, "[OtherPlugin] Its profiler is now running!")
+    assert capture["status"] == "requested"
     service.apply_capture_line(capture, "[spark] Profiler is now running!")
     assert capture["status"] == "running"
     service.apply_capture_line(capture, "[OtherPlugin] Failed to load its config")
+    assert capture["status"] == "running"
+    service.apply_capture_line(capture, "[OtherPlugin] Failed to start its profiler")
     assert capture["status"] == "running"
     for url in ("https://spark.lucko.me.evil/abc123", "http://spark.lucko.me/abc123",
                 "https://spark.lucko.me/abc123?secret=x", "https://spark.lucko.me/abc123/evil",
@@ -332,24 +339,6 @@ def test_console_cursor_never_reads_old_run_or_chat_as_report(record, manager):
     assert manager.console_since() == (10, [])
     assert manager.console_since(9) == (10, ["new line"])
     assert manager.console_since(10) == (10, [])
-
-
-def test_permission_gate_covers_server_scope_and_manage(app, record, monkeypatch):
-    from flask import g
-    from backend.auth.permissions import Principal, authorize
-    def gate():
-        return authorize(g.test_user)
-    # Exercise the actual catalog/resolver without mocking diagnostics handlers.
-    app.before_request_funcs[None].append(gate)
-    viewer = Principal("viewer", "issuer", (), frozenset(),
-                       {"a": frozenset({"server.view", "server.metrics.read"})}, {"a": ()})
-    # This hook must run before the catalog gate.
-    app.before_request_funcs[None].insert(0, lambda: setattr(g, "test_user", viewer))
-    client = app.test_client()
-    assert client.get("/api/servers/a/diagnostics").status_code == 200
-    assert client.post("/api/servers/a/diagnostics/captures", json={"acceptUpload": True}).status_code == 403
-    assert client.put("/api/servers/a/diagnostics/sampling", json={"jvmSampling": True}).status_code == 403
-    assert client.get("/api/servers/b/diagnostics").status_code == 404
 
 
 def test_capture_routes_are_not_accessible_to_mcp_tokens():

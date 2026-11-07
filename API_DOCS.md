@@ -923,92 +923,74 @@ registry rejected it (e.g. the server is not running).
 }
 ```
 
+**Error (500):** `psutil` is not installed.
+
 ### Performance history and guided profiling
 
-`GET /api/servers/<server_id>/diagnostics?window=1h` requires
-`server.metrics.read` and server visibility. `window` accepts only `1h`, `6h`
-or `24h`. The response contains `samples`, `captures`, `capability`,
-`jvmSampling`, `captureReady` (live process readiness), `intervalSeconds` (30), `retentionSeconds` (86400),
-`samplingEnabled` and `samplingError`. Responses are `Cache-Control: no-store`.
-MCP tokens cannot use these endpoints: report URLs are operational capabilities,
-not public catalog links.
+All paths below are relative to `/api/servers/<server_id>/diagnostics` and
+require server visibility. Responses are `Cache-Control: no-store`.
+MCP tokens cannot access these endpoints.
 
-Samples use Unix seconds (`ts`), `running`, and available fields only:
-`tps`, `mspt` (milliseconds/tick), `cpu` (raw process percent, potentially over
-100), `rssBytes`, `heapUsedBytes`, `gcCollections`, `gcTimeMs`,
-`volumeUsedBytes`, `volumeTotalBytes`, and an opaque JVM `run` boundary.
-Missing fields are unavailable, **never implicit zero**. TPS retains the incumbent
-loader-specific semantics (Paper's rolling one-minute figure, Forge overall
-TPS, or vanilla's rate estimated from measured tick cost). MSPT is preserved from
-vanilla-family `tick query` / Forge overall output; modern Paper additionally
-receives `minecraft:tick query` without replacing its rolling TPS. Other runtimes
-remain unavailable. Samples use the latest non-stale TPS/MSPT observation;
-they are not independent instantaneous measurements. This is not a new
-Minecraft plugin or a change to the server's target tick rate.
+| Method / path | Permission | Request |
+|---|---|---|
+| `GET` (base path) | `server.metrics.read` | `window=1h` (default), `6h` or `24h`; other values return 400 |
+| `PUT /sampling` | `diagnostics.manage` | `{"jvmSampling": true}` to enable; `false` to disable |
+| `POST /captures` | `diagnostics.manage` | `{"durationSeconds": 60, "acceptUpload": true}` |
 
-Disk values describe **used/total filesystem capacity for the server directory**,
-shared with other files on that volume. They are not world size, disk throughput
-or I/O latency. World trees are not scanned during lag. JVM GC counters/time
-are cumulative since JVM start, not interval pause duration or pause percentiles.
-Graphs break at unavailable points, collection gaps and JVM restarts.
+History returns `samples`, `captures`, `capability`, `captureReady` (live runtime
+readiness), `jvmSampling`, `intervalSeconds` (30), `retentionSeconds` (86400),
+`samplingEnabled` and `samplingError`. Each sample has Unix seconds `ts`,
+`running`, an opaque JVM `run` boundary when running, and available fields:
 
-`PUT /api/servers/<server_id>/diagnostics/sampling` with
-`{"jvmSampling": true}` explicitly opts into local `jstat -gc` sampling;
-`false` disables it. It requires `diagnostics.manage`. The tool is resolved next
-to the **running server's configured Java binary**, never installed automatically,
-and bounded to two seconds per 30-second collection. Heap used sums the
-young/old-generation used columns in KiB and converts to bytes; metaspace is
-not heap. `GCT` seconds are converted to milliseconds. Unsupported counters,
-collectors, unavailable tooling or attach failures are omitted, with a
-`jvmUnavailable` reason. This does not change the existing opt-in Overview
-`jcmd` heap display preference.
+| Fields | Meaning |
+|---|---|
+| `tps`, `mspt` | Loader TPS or vanilla tick-cost estimate; measured milliseconds/tick |
+| `cpu`, `rssBytes`, `heapUsedBytes` | Raw process CPU% (may exceed 100), resident and JVM heap bytes |
+| `gcCollections`, `gcTimeMs` | Cumulative JVM GC counters and milliseconds, not pause percentiles |
+| `volumeUsedBytes`, `volumeTotalBytes` | Shared server filesystem capacity, not world size or process I/O |
 
-`POST /api/servers/<server_id>/diagnostics/captures` requires
-`diagnostics.manage`, a running ready matching runtime, and body:
+**Missing fields are unavailable, not zero.** TPS/MSPT use the latest non-stale
+observations, not independent instantaneous measurements. MSPT comes from
+vanilla-family `tick query` or Forge overall output; modern Paper also receives
+`minecraft:tick query` without replacing its rolling one-minute TPS. Charts
+break at unavailable samples, collection gaps and restarts; times are local.
 
-```json
-{"durationSeconds": 60, "acceptUpload": true}
-```
+Opt-in heap/GC sampling runs `jstat -gc` next to the running server's Java binary,
+with a two-second timeout. Young/old heap KiB are converted to bytes (excluding
+metaspace); `GCT` seconds become milliseconds. Missing tools, unsupported output
+and attach failures produce a `jvmUnavailable` reason, not invented readings.
+The existing opt-in Overview `jcmd` display is unchanged.
 
-Only 60, 120 or 300 seconds are accepted. Missing explicit upload consent,
-unverified runtime, an existing guided capture or a failed command returns
-409; a submitted command returns 202 with status `requested`, **not success**.
-The only issued command is `spark profiler start --timeout <bounded integer>`.
-No plugin/mod installation, automatic restart or runtime upgrade occurs.
-The initial supported capability is precisely released Paper 1.21+ versions
-in the `1.x` numbering scheme, documented to bundle spark:
+Captures accept only 60, 120 or 300 seconds and require explicit external-upload
+consent and a ready matching runtime. Unsupported runtimes, duplicate captures
+or failed commands return 409. Submission returns 202 with `requested` status,
+not a confirmed capture. The sole command is `spark profiler start --timeout
+<seconds>`. No installation, restart or runtime upgrade occurs.
+
+Guided capture supports released Paper 1.21+ in the `1.x` version scheme:
 [Paper profiling](https://docs.papermc.io/paper/profiling/),
-[spark commands](https://spark.lucko.me/docs/Command-Usage).
-Forks, other loaders, snapshots and unknown/year-numbered versions are not
-inferred compatible. Bundled spark may still be disabled or fail at runtime;
-console acknowledgement and report receipt are tracked independently.
+[spark commands](https://spark.lucko.me/docs/Command-Usage). Forks, other loaders,
+snapshots and unknown/year-numbered versions need manual compatibility checks.
+Bundled spark can still be disabled or fail; acknowledgement and report receipt
+are tracked separately.
 
-Spark uploads reports to its external service when the timeout ends. Reports
-can contain operational data and anyone holding a report URL may be able to
-view it. This informed consent must be shown before each request. Capture
-records retain only a bounded status, start time, duration and a strictly
-validated `https://spark.lucko.me/<alphanumeric-id>` reference, not report
-contents or raw logs. Links open externally with no referrer; reports are
-never fetched or embedded by Fabricator. Viewers with this server's metrics
-permission may see retained references. Do not share links without review.
-Statuses are `requested`, `running`, `ready`, `failed`, or `interrupted`;
-lost acknowledgement is not proof of failure, and missing reports never
-trigger automatic retries. Interrupted Fabricator tracking cannot stop a
-previously submitted bounded spark command; inspect the server console.
-External report deletion is governed by spark, not local reference retention.
+Spark uploads when the timeout ends. **Reports may contain operational data;
+anyone with the URL may view them.** Show this consent before every capture.
+Only status, start time, duration and a validated
+`https://spark.lucko.me/<alphanumeric-id>` reference are retained, not report
+contents or logs. References follow server metrics permissions, open externally
+without a referrer, and are never fetched or embedded by Fabricator.
+Statuses are `requested`, `running`, `ready`, `failed`, or `interrupted`.
+No acknowledgement is not proof of failure; missing reports are not retried.
+Interrupted tracking may leave the bounded command running: inspect the console.
+Local reference expiry does not delete the external spark report.
 
-History is sampled without an open browser and persisted alongside the server
-index in `diagnostics.sqlite3`. Retention is 24 hours, at most 2880 samples and
-20 captures per server, with expiry/orphan cleanup each sweep and explicit
-server-deletion cleanup. SQLite reclaims deleted pages. A Fabricator restart
-marks unfinished tracked captures interrupted. Only one guided capture per
-server is tracked concurrently. Set `FABRICATOR_DISABLE_DIAGNOSTICS=1` to
-disable background collection (also used for isolated tests); existing
-retained history remains readable within its window. Sampling failures appear
-in `samplingError` and application logs. These trends correlate measurements;
-they do not automatically diagnose a root cause.
-
-**Error (500):** `psutil` is not installed.
+`diagnostics.sqlite3` lives next to the server index. Background collection runs
+without a browser; retention is 24 hours, at most 2880 samples and 20 captures
+per server. Sweeps expire records and remove orphans; server deletion clears its
+state. Restarts mark unfinished tracking interrupted. Only one guided capture
+per server is tracked. `FABRICATOR_DISABLE_DIAGNOSTICS=1` disables collection,
+not reads; sampling failures appear in `samplingError` and application logs.
 
 ---
 

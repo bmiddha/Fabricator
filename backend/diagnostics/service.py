@@ -20,7 +20,7 @@ _init_lock = threading.Lock()
 _captures_lock = threading.RLock()
 _active = {}
 _worker_error = None
-_REPORT_RE = re.compile(r"https://spark\.lucko\.me/([A-Za-z0-9]{5,100})(?![A-Za-z0-9/?#._:%@-])")
+_REPORT_RE = re.compile(r"https://spark\.lucko\.me/[A-Za-z0-9]{5,100}")
 
 
 def get_server_process_registry():
@@ -33,8 +33,7 @@ class DiagnosticError(ValueError):
 
 
 def capability(server):
-    # Deliberately do not infer support from a jar filename, a compatible mod
-    # loader, or a fork name. Bundling on these runtimes is not guaranteed.
+    # Only released Paper versions with documented bundled spark support.
     version = re.fullmatch(r"1\.(\d+)(?:\.\d+)?", str(server.get("version", "")))
     bundled = server.get("loader") == "paper" and bool(version and int(version[1]) >= 21)
     return {
@@ -48,7 +47,10 @@ def parse_jstat(output):
     lines = output.strip().splitlines()
     if len(lines) != 2:
         return {}
-    values = dict(zip(lines[0].split(), lines[1].split()))
+    headers, readings = (line.split() for line in lines)
+    if len(headers) != len(readings) or len(set(headers)) != len(headers):
+        return {}
+    values = dict(zip(headers, readings))
 
     def number(key):
         try:
@@ -64,12 +66,10 @@ def parse_jstat(output):
     gc_time = number("GCT")
     if gc_time is not None:
         result["gcTimeMs"] = gc_time * 1000
-    counts = [number(key) for key in ("YGC", "FGC")]
-    if all(value is not None for value in counts):
-        concurrent = number("CGC")
-        # A present but unsupported counter must not be interpreted as zero.
-        if "CGC" not in values or concurrent is not None:
-            result["gcCollections"] = int(sum(counts) + (concurrent or 0))
+    counters = ("YGC", "FGC", "CGC") if "CGC" in values else ("YGC", "FGC")
+    counts = [number(key) for key in counters]
+    if all(value is not None and value.is_integer() for value in counts):
+        result["gcCollections"] = int(sum(counts))
     return result
 
 
@@ -125,8 +125,7 @@ def sample(server, registry=None, now=None):
         if manager._process is not process or not manager.is_running:
             result = {"ts": int(now), "running": manager.is_running,
                       "jvmUnavailable": "process-changed"}
-    # Volume capacity is not world size or process disk I/O. Never walk worlds
-    # or spawn du during lag; that would worsen the incident being diagnosed.
+    # Shared filesystem capacity; avoid world scans during lag.
     try:
         path = registry.resolve_install_path(server)
         disk = shutil.disk_usage(path)
@@ -172,10 +171,7 @@ def init(app):
         if _thread and _thread.is_alive():
             return
         for server in servers.load_servers():
-            for capture in storage.captures(server["id"]):
-                if capture["status"] in {"requested", "running"}:
-                    capture.update(status="interrupted", message="Fabricator restarted; the bounded spark command may still finish in the server console.")
-                    storage.save_capture(server["id"], capture)
+            capture_history(server["id"])
         _thread = threading.Thread(target=_sampler, daemon=True, name="performance-history")
         _thread.start()
 
@@ -201,7 +197,7 @@ def capture_history(server_id):
         captures = storage.captures(server_id)
         for capture in captures:
             if capture["status"] in {"requested", "running"} and _active.get(server_id) != capture["id"]:
-                capture.update(status="interrupted", message="Capture tracking ended or Fabricator restarted. The bounded command may still complete; check the server console.")
+                capture.update(status="interrupted", message="Tracking ended. spark may still finish; check the server console.")
                 storage.save_capture(server_id, capture)
         return captures
 
@@ -221,23 +217,23 @@ def console_body(manager, line):
 def apply_capture_line(capture, body):
     """Only fixed status text and a strict official viewer URL leave the console."""
     lowered = body.lower()
-    spark_message = lowered.startswith(("[spark]", "[\u26a1]")) or "profiler" in lowered
+    spark_message = lowered.startswith(("[spark]", "[\u26a1]", "profiler ", "the profiler ", "the active profiler "))
     unknown_command = capture["status"] == "requested" and lowered.startswith(("unknown command", "unknown or incomplete command"))
     if unknown_command or (spark_message and any(text in lowered for text in (
         "unknown command", "unknown or incomplete command", "already running",
         "profiler is not running", "profiler isn't running", "profiler is not active",
         "failed to", "not enabled", "cancelled",
     ))):
-        capture.update(status="failed", message="spark rejected the capture or could not upload it. Check the server console.")
-    elif "profiler is now running!" in lowered:
-        capture.update(status="running", message="spark acknowledged profiling. Wait for the bounded capture to finish.")
+        capture.update(status="failed", message="spark rejected the capture. Check the server console.")
+    elif spark_message and "profiler is now running!" in lowered:
+        capture.update(status="running", message="spark acknowledged the capture.")
     elif spark_message and "error occurred whilst uploading" in lowered:
-        capture.update(status="failed", message="spark could not upload the report and may have saved a local file. Check the server console.")
+        capture.update(status="failed", message="Upload failed. spark may have saved a local file; check the server console.")
     if capture["status"] == "running":
         match = _REPORT_RE.fullmatch(body.strip())
         if match:
             capture.update(status="ready", reportUrl=match[0],
-                           message="spark report received. Correlate its capture window with local trends; this is evidence, not a root-cause diagnosis.")
+                           message="spark report received.")
 
 
 def delete_state(server_id):
@@ -247,8 +243,7 @@ def delete_state(server_id):
 
 
 def _persist_capture(server_id, capture):
-    # Serialize deletion with tracker writes so a finishing worker cannot
-    # resurrect a deleted server's report reference.
+    # Prevent a finishing worker from resurrecting deleted references.
     with _captures_lock:
         if _active.get(server_id) == capture["id"]:
             storage.save_capture(server_id, capture)
@@ -276,18 +271,17 @@ def _watch_capture(server_id, manager, process, capture, cursor):
             if capture["status"] in {"ready", "failed"}:
                 break
             if capture["status"] == "requested" and time.monotonic() > confirmed_by:
-                # Keep the lease until the full bounded command could finish:
-                # a lagging JVM may acknowledge late. Do not start a duplicate.
-                capture["message"] = "No spark acknowledgement yet. The JVM may be lagging; wait or inspect the console."
+                # Keep the lease through the timeout to prevent duplicate captures.
+                capture["message"] = "Waiting for spark acknowledgement. Check the server console."
             if capture != previous:
                 _persist_capture(server_id, capture)
             time.sleep(1)
         else:
-            capture.update(status="failed", message="No report confirmed before the deadline. Check the console; Fabricator will not invent a report or retry.")
+            capture.update(status="failed", message="No report received before the deadline. Check the server console before retrying.")
         _persist_capture(server_id, capture)
     except Exception:
         logger.exception("Could not track spark capture for %s", server_id)
-        capture.update(status="failed", message="Capture tracking failed; check Fabricator logs and the server console.")
+        capture.update(status="failed", message="Tracking failed. Check Fabricator logs and the server console.")
         try:
             _persist_capture(server_id, capture)
         except Exception:
@@ -300,18 +294,17 @@ def _watch_capture(server_id, manager, process, capture, cursor):
 
 def start_capture(server, data):
     if not isinstance(data, dict) or data.get("acceptUpload") is not True:
-        raise DiagnosticError("Explicit consent to upload operational diagnostics to spark is required.")
+        raise DiagnosticError("Consent to upload operational diagnostics to spark is required.")
     duration = data.get("durationSeconds", 60)
     if type(duration) is not int or duration not in (60, 120, 300):
         raise DiagnosticError("Capture duration must be 60, 120 or 300 seconds.")
     if not capability(server)["supported"]:
-        raise DiagnosticError("Guided captures require a verified Paper 1.21+ bundled spark runtime. Use the spark documentation for other loaders; nothing is installed automatically.")
+        raise DiagnosticError("Guided captures require a verified Paper 1.21+ release.")
     manager = get_server_process_registry().get_manager(server["id"])
     if not manager or not manager.is_running or not manager._ready_event.is_set():
         raise DiagnosticError("Start the server and wait until it is ready before profiling.")
-    # Check runtime, not a subsequently edited server record.
     if manager.loader != server.get("loader") or manager.version != server.get("version"):
-        raise DiagnosticError("Configured and running runtimes differ; review the server console before profiling.")
+        raise DiagnosticError("Configured and running runtimes differ. Check the server console.")
     with _captures_lock:
         if server["id"] in _active:
             raise DiagnosticError("A guided capture is already in progress.")
@@ -336,7 +329,7 @@ def start_capture(server, data):
             worker.start()
         except RuntimeError:
             logger.exception("Could not start spark capture tracking for %s", server["id"])
-            capture.update(status="failed", message="Capture tracking could not start. The bounded command may still complete; inspect the server console before retrying.")
+            capture.update(status="failed", message="Capture tracking could not start. spark may still finish; check the console before retrying.")
             try:
                 _persist_capture(server["id"], capture)
             finally:

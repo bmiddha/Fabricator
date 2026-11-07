@@ -66,11 +66,11 @@ async function capture() {
     consent.value = false
   })
 }
-onMounted(async () => {
+onMounted(async function poll() {
   await refresh()
-  if (alive) timer = setInterval(refresh, 15000)
+  if (alive) timer = setTimeout(poll, 15000)
 })
-onUnmounted(() => { alive = false; requestId++; clearInterval(timer) })
+onUnmounted(() => { alive = false; requestId++; clearTimeout(timer) })
 </script>
 
 <template>
@@ -107,13 +107,16 @@ onUnmounted(() => { alive = false; requestId++; clearInterval(timer) })
             <MetricTrend :samples="data.samples" :metric="selections[index].key" :unit="selections[index].unit" :label="t(`diagnostics.metrics.${selections[index].key}`)" :start="start" :end="end" />
           </div>
         </div>
-        <p class="diagnostics__note">{{ t('diagnostics.units') }}</p>
         <p class="diagnostics__note">{{ t('diagnostics.diskScope') }}</p>
+        <details class="diagnostics__notes">
+          <summary>{{ t('diagnostics.measurementNotes') }}</summary>
+          <p>{{ t('diagnostics.units') }}</p>
+          <p>{{ t('diagnostics.jvmHelp') }}</p>
+        </details>
         <label v-if="canManage" class="diagnostics__check">
           <input type="checkbox" :checked="data.jvmSampling" :disabled="busy" @change="setSampling">
           {{ t('diagnostics.jvmSampling') }}
         </label>
-        <p class="diagnostics__note">{{ t('diagnostics.jvmHelp') }}</p>
         <p v-if="data.samples.at(-1)?.jvmUnavailable" class="diagnostics__note">{{ t(`diagnostics.reasons.${data.samples.at(-1).jvmUnavailable}`) }}</p>
         <section class="diagnostics__profiling" :aria-label="t('diagnostics.spark')">
           <h4>{{ t('diagnostics.spark') }}</h4>
@@ -155,6 +158,9 @@ onUnmounted(() => { alive = false; requestId++; clearInterval(timer) })
 <style scoped>
 .diagnostics { display: grid; gap: var(--space-4); font-size: var(--text-sm); line-height: var(--leading-normal); }
 .diagnostics__intro, .diagnostics__note { max-width: 75ch; color: var(--text-muted); }
+.diagnostics__notes { color: var(--text-muted); max-width: 75ch; }
+.diagnostics__notes summary { cursor: pointer; color: var(--text-secondary); }
+.diagnostics__notes p { margin-top: var(--space-2); }
 .diagnostics__toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
 .diagnostics__toolbar > span { color: var(--text-muted); }
 label { display: inline-flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }

@@ -35,11 +35,13 @@ const { useAuthStore } = await vite.ssrLoadModule('/src/stores/auth.js')
 const Diagnostics = (await vite.ssrLoadModule('/src/components/PerformanceDiagnostics.vue')).default
 const apps = []
 const originalFetch = globalThis.fetch
+const originalSetTimeout = globalThis.setTimeout
 after(async () => { await vite.close(); dom.window.close() })
 afterEach(() => {
   apps.splice(0).forEach(app => app.unmount())
   document.body.innerHTML = ''
   globalThis.fetch = originalFetch
+  globalThis.setTimeout = originalSetTimeout
 })
 async function settle() {
   for (let i = 0; i < 6; i++) {
@@ -132,4 +134,41 @@ test('failed reads surface an actionable error instead of empty success', async 
   mount()
   await settle()
   assert.match(document.querySelector('[role=alert]').textContent, /History storage unavailable/)
+})
+test('measurement notes are collapsed but upload consent remains visible', async () => {
+  mockRequests()
+  mount(true)
+  await settle()
+  const notes = document.querySelector('details')
+  assert.equal(notes.open, false)
+  assert.match(notes.textContent, /GC counters reset each JVM run/)
+  const consent = [...document.querySelectorAll('input[type=checkbox]')].at(-1)
+  assert.equal(consent.closest('details'), null)
+  assert.match(consent.parentElement.textContent, /external service/)
+  assert.match(consent.parentElement.textContent, /operational data/)
+  assert.match(consent.parentElement.textContent, /Anyone with the URL/)
+})
+test('polling waits for slow requests before scheduling another refresh', async () => {
+  const callbacks = []
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    if (delay === 15000) { callbacks.push(callback); return 0 }
+    return originalSetTimeout(callback, delay, ...args)
+  }
+  let respond
+  globalThis.fetch = () => new Promise(resolve => { respond = resolve })
+  const response = () => new Response(JSON.stringify(fixture()), {
+    headers: { 'Content-Type': 'application/json' },
+  })
+  mount()
+  await settle()
+  assert.equal(callbacks.length, 0)
+  respond(response())
+  await settle()
+  assert.equal(callbacks.length, 1)
+  const pending = callbacks.shift()()
+  await settle()
+  assert.equal(callbacks.length, 0)
+  respond(response())
+  await pending
+  assert.equal(callbacks.length, 1)
 })
