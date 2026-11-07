@@ -12,6 +12,7 @@ import { isPluginLoader } from '../../utils/loaderKind'
 import { t } from '../../i18n'
 import { useCapabilities } from '../../composables/useCapabilities'
 import ClientPackPanel from '../../components/ClientPackPanel.vue'
+import ModpackUpdates from '../../components/ModpackUpdates.vue'
 
 const store = useServerStore()
 const can = useCapabilities()
@@ -135,6 +136,13 @@ const selectAllLabel = computed(() => {
         </a>
       </div>
     </Panel>
+
+    <ModpackUpdates
+      v-if="store.server && ['fabric', 'quilt', 'forge', 'neoforge'].includes(store.server.loader) && ['modpacks.install', 'files.read', 'server.settings.read'].every(permission => can(permission))"
+      :key="`updates-${store.currentServerId}`"
+      :server-id="store.currentServerId"
+      :server="store.server"
+    />
 
     <ClientPackPanel
       v-if="store.server && ['clientpacks.read', 'clientpacks.manage', 'clientpacks.export', 'clientpacks.download'].some(permission => can(permission))"

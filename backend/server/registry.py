@@ -301,8 +301,10 @@ class ServerProcessRegistry:
         self, server: Dict[str, object], required_java_major: Optional[int] = None,
     ) -> Dict[str, object]:
         if ((self.resolve_install_path(server) / '.fabricator-transfer').exists()
+                or (self.resolve_install_path(server) / '.fabricator-update').exists()
+                or (self.resolve_install_path(server) / '.fabricator-staging').exists()
                 or (self.base_dir / ('.fork-' + str(server['id']))).exists()):
-            return {'status': 'error', 'message': 'Interrupted world transfer requires recovery before starting'}
+            return {'status': 'error', 'message': 'Interrupted transfer or modpack update requires recovery before starting'}
         if server.get('loader') == 'velocity' and required_java_major is None and not skip_java_enforcement():
             required_java_major = resolve_required_java(str(server.get('version') or ''), 'velocity').required_java
         try:

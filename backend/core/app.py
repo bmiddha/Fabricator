@@ -11,6 +11,7 @@ from backend.auth import init_auth
 from backend.server.routes import server_bp
 from backend.modrinth.routes import modrinth_bp
 from backend.modrinth.client_pack_routes import client_pack_bp, client_pack_share_bp
+from backend.modrinth.update_routes import updates_bp
 from backend.system.routes import system_bp
 from backend.backups.routes import backups_bp
 from backend.server.players.routes import players_bp
@@ -71,6 +72,7 @@ def create_app() -> Flask:
     app.register_blueprint(maps_bp)
     app.register_blueprint(velocity_bp, url_prefix="/api")
     app.register_blueprint(transfers_bp)
+    app.register_blueprint(updates_bp)
 
     # One-time startup cleanup: flip stale 'installing'/'starting' statuses
     # left over from a previous run. Tolerates a missing/malformed index.
@@ -78,6 +80,8 @@ def create_app() -> Flask:
     cleanup_stale_statuses()
     from backend.server.transfers import recover as recover_transfers
     recover_transfers()
+    from backend.modrinth.updates import recover as recover_updates
+    recover_updates()
 
     # Same idea for abandoned world uploads (up to 10 GiB each). They are
     # stranded by exactly the unclean shutdown this boot follows, so sweeping

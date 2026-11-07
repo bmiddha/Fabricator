@@ -27,6 +27,12 @@ _rule("PUT", "/servers/order", "servers.reorder")
 _server("POST", "/transfers/<kind>/preview", "server.view")
 _server("POST", "/transfers/<kind>", "server.view")
 _server("GET", "/worlds", "worlds.read")
+for method, suffix in [
+    ("GET", "/modpack-updates"), ("POST", "/modpack-updates"),
+    ("GET", "/modpack-updates/<plan_id>"), ("DELETE", "/modpack-updates/<plan_id>"),
+    ("POST", "/modpack-updates/<plan_id>/<action>"),
+]:
+    _server(method, suffix, "modpacks.install")
 # These handlers verify both instances, the operation-specific permissions and
 # job ownership before exposing metadata. Generic server.view is insufficient.
 _rule("GET", "/transfer-jobs/<job_id>", target="transfer-job")
@@ -167,7 +173,7 @@ for path in [
 
 CATALOG = frozenset(
     {"server.settings.read"} | {p for perms, _ in RULES.values() for p in perms}
-    | {"tokens.all.manage", "server.fork", "worlds.read"}
+    | {"tokens.all.manage", "server.fork", "worlds.read", "modpacks.promote"}
 )
 GLOBAL = frozenset(
     p for p in CATALOG

@@ -550,6 +550,11 @@ class ServerManager:
             self._process = None
             return False, f"Failed to start server: {exc}"
 
+    @property
+    def startup_ready(self) -> bool:
+        """Whether the current run emitted Minecraft's readiness signal."""
+        return self._ready_event.is_set()
+
     def start(self, required_java_major: Optional[int] = None) -> dict:
         """Start the server process if it is not already running."""
         with self._lock:

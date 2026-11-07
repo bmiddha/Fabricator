@@ -461,10 +461,10 @@ def _fork_record(source, root, stage, plan, server_id):
     return record
 
 
-def _safety(server_id, root):
+def _safety(server_id, root, purpose="world-copy"):
     location = root / "backups"
     location.mkdir(exist_ok=True)
-    final = location / f"safety-world-copy-{uuid.uuid4().hex}.tar"
+    final = location / f"safety-{purpose}-{uuid.uuid4().hex}.tar"
     partial = final.with_suffix(".partial")
     try:
         skip = lambda rel: rel.split("/")[0] in {"backups", ".fabricator-transfer"}
@@ -494,7 +494,7 @@ def _safety(server_id, root):
         _sync_dir(location)
         return backup_storage.record_snapshot(server_id, {
             "type": "safety", "configId": None, "filePath": str(final), "fileName": final.name,
-            "sizeBytes": final.stat().st_size, "status": "success", "message": "Before world copy",
+            "sizeBytes": final.stat().st_size, "status": "success", "message": "Before " + purpose.replace("-", " "),
         })
     finally:
         partial.unlink(missing_ok=True)

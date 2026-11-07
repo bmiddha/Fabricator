@@ -14,6 +14,7 @@ Errors are consistently `{"error": "<message>"}`. Anything under `/api` not list
 - [Health](#health)
 - [Servers](#servers)
 - [Instance forks and world copies](#instance-forks-and-world-copies)
+- [Staged modpack updates](#staged-modpack-updates)
 - [DNS management](#dns-management)
 - [Server files](#server-files)
 - [Mods](#mods)
@@ -36,6 +37,50 @@ Errors are consistently `{"error": "<message>"}`. Anything under `/api` not list
 - [Security notes](#security-notes)
 
 ---
+
+## Staged modpack updates
+
+Session-only, owner-bound and `Cache-Control: no-store`; unavailable to MCP
+tokens and managed deployments. See the [operator guide](deploy/modpack-updates/README.md)
+for trust boundaries, exact scope and recovery. No endpoint starts production.
+
+Base: `/api/servers/<server_id>/modpack-updates`. All endpoints require
+`server.view`, `modpacks.install`, `files.read` and `server.settings.read` on
+production, plus the operation-specific permissions below.
+
+| Method | Suffix | Body / result |
+|---|---|---|
+| GET | (base) | `{plans:[...]}` for the current owner, newest first |
+| POST | (base) | `{source:"project",project_id:"slug",replaceFiles:[]}` or `{source:"upload",upload_id:"...",replaceFiles:[]}`; `202` with plan ID/status |
+| GET | `/<plan_id>` | Public review/status, no private source metadata or filesystem roots |
+| DELETE | `/<plan_id>` | Delete inactive review and candidate storage; retain staging and safety backups |
+| POST | `/<plan_id>/stage` | `{reviewToken,name,acknowledgeRisks:true}`; needs source `server.fork` and global `servers.create` |
+| POST | `/<plan_id>/validate` | `{reviewToken,executePackCode:true}`; needs staging view/settings-read/files-read/start/stop |
+| POST | `/<plan_id>/promote` | `{reviewToken,confirmName:"exact production name"}`; needs staging rights above, production `modpacks.promote` and `backups.create` |
+
+Poll the plan or collection after any `202`. States: `preparing`, `review`,
+`staging`, `staged`, `validating`, `validated`, `promoting`, `promoted`, `failed`.
+Reviews include `changes` with path/action/category/conflict, before/after
+SHA-256 hashes and bounded text config diffs; `preservedFiles`,
+`loaderChanges`, `dependencyReview`, `clientImpact`, `warnings` and
+`reviewToken`. Staging adds `stagingId`; validation adds `validatedAt`;
+promotion adds `safetySnapshotId`. A post-commit failure explicitly reports
+`productionChanged:true`; never blindly retry it. Failed/interrupted operations
+require a fresh review. `recoveryRequired:true` means an update journal still
+blocks production starts and review deletion until panel startup recovery.
+
+Only reviewed mod/config/defaultconfig files are promoted. Game/loader/build
+mismatches are visible but blocked. Reviewed local-conflict replacements
+require a **new plan**; production/staging content or runtime changes invalidate
+approval. Production worlds may evolve between review and promotion; the
+mandatory safety backup captures their current state, and staging worlds are
+never imported. Startup validation only verifies a fresh Minecraft readiness
+signal and successful stop, not gameplay or complete dependency compatibility.
+
+Malformed/unsupported operations return `400`; missing/foreign plans or
+permissions return `403` (unknown plans may return `400`); stale review/input
+bindings return `409`. Worker failures are explicit persisted `failed` states.
+Uploaded pack handles use the existing owner-bound modpack upload endpoint.
 
 ## Instance forks and world copies
 
