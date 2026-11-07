@@ -13,45 +13,43 @@ const auth = useAuthStore()
 const destinations = ref([])
 const deliveries = ref([])
 const alerts = ref([])
-const editing = ref(false)
 const editingId = ref(null)
 const busy = ref(false)
 const loading = ref(false)
 const error = ref('')
+const loadError = ref('')
 const notice = ref('')
 const removing = ref(null)
 const alertKinds = ['server.crashed', 'backup.failed', 'job.failed', 'disk.pressure', 'disk.recovered']
 const blank = () => ({ name: '', kind: 'webhook', url: '', enabled: true, alerts: [...alertKinds] })
-const form = ref(blank())
+const form = ref(null)
 let timer
-let alive = true
 let requestId = 0
 
 async function load() {
   const id = ++requestId
   loading.value = true
+  loadError.value = ''
   try {
     const data = await getNotifications()
-    if (!alive || id !== requestId) return
+    if (id !== requestId) return
     destinations.value = data.destinations
     deliveries.value = data.deliveries
     alerts.value = data.alerts
-    error.value = ''
   } catch (e) {
-    if (alive && id === requestId) error.value = e.message
+    if (id === requestId) loadError.value = e.message
   } finally {
-    if (alive && id === requestId) loading.value = false
+    if (id === requestId) loading.value = false
   }
 }
 function edit(destination = null) {
   editingId.value = destination?.id || null
   form.value = destination ? { name: destination.name, kind: destination.kind, url: '', enabled: destination.enabled, alerts: [...destination.alerts] } : blank()
-  editing.value = true
   notice.value = ''
 }
 function cancel() {
-  editing.value = false
-  form.value = blank() // Remove the entered secret from component state.
+  editingId.value = null
+  form.value = null
 }
 async function act(action, message) {
   busy.value = true
@@ -73,7 +71,12 @@ async function save() {
   await act(async () => { await saveDestination(data, editingId.value); cancel() }, t('notifications.saved'))
 }
 async function remove() {
-  await act(async () => { await deleteDestination(removing.value.id); removing.value = null }, t('notifications.removed'))
+  const id = removing.value.id
+  await act(async () => {
+    await deleteDestination(id)
+    if (editingId.value === id) cancel()
+    removing.value = null
+  }, t('notifications.removed'))
 }
 onMounted(() => {
   load()
@@ -81,19 +84,19 @@ onMounted(() => {
     if (!loading.value && !busy.value && deliveries.value.some(d => ['pending', 'sending'].includes(d.state))) load()
   }, 5000)
 })
-onUnmounted(() => { alive = false; clearInterval(timer); form.value = blank() })
+onUnmounted(() => { requestId++; clearInterval(timer); form.value = null })
 </script>
 
 <template>
   <div class="notifications">
     <p class="notifications__intro">{{ $t('notifications.description') }}</p>
-    <p v-if="error" role="alert" class="notifications__error">{{ error }}</p>
+    <p v-if="error || loadError" role="alert" class="notifications__error">{{ error || loadError }}</p>
     <p v-if="notice" role="status" class="notifications__notice">{{ notice }}</p>
     <Panel :title="$t('notifications.destinations')">
       <template #action>
-        <AppButton v-if="!editing" :disabled="busy || loading" @click="edit()">{{ $t('notifications.add') }}</AppButton>
+        <AppButton v-if="!form" :disabled="busy || loading" @click="edit()">{{ $t('notifications.add') }}</AppButton>
       </template>
-      <form v-if="editing" class="notifications__form" @submit.prevent="save">
+      <form v-if="form" class="notifications__form" @submit.prevent="save">
         <h4>{{ $t(editingId ? 'notifications.edit' : 'notifications.add') }}</h4>
         <label for="notification-name">{{ $t('notifications.name') }}
           <input id="notification-name" v-model="form.name" required maxlength="80" :disabled="busy" />
@@ -121,7 +124,7 @@ onUnmounted(() => { alive = false; clearInterval(timer); form.value = blank() })
         </div>
       </form>
       <p v-if="loading && !destinations.length" role="status">{{ $t('activity.loading') }}</p>
-      <p v-else-if="!destinations.length && !editing" class="notifications__hint">{{ $t('notifications.empty') }}</p>
+      <p v-else-if="!destinations.length && !form" class="notifications__hint">{{ $t('notifications.empty') }}</p>
       <ul class="notifications__list">
         <li v-for="destination in destinations" :key="destination.id" class="notifications__destination">
           <div>
@@ -138,7 +141,7 @@ onUnmounted(() => { alive = false; clearInterval(timer); form.value = blank() })
     </Panel>
 
     <Panel :title="$t('notifications.deliveryTitle')">
-      <template #action><AppButton variant="ghost" :loading="loading" @click="load">{{ $t('activity.refresh') }}</AppButton></template>
+      <template #action><AppButton variant="ghost" :loading="loading" :disabled="busy" @click="load">{{ $t('activity.refresh') }}</AppButton></template>
       <p class="notifications__hint">{{ $t('notifications.deliveryHelp') }}</p>
       <p v-if="!deliveries.length" class="notifications__empty">{{ $t('notifications.noDeliveries') }}</p>
       <div v-else class="notifications__table-wrap">

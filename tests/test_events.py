@@ -322,6 +322,27 @@ def test_cooldown_does_not_hide_job_outcomes():
     assert {row["state"] for row in service.deliveries()} == {"pending", "suppressed"}
 
 
+def test_terminal_alert_uses_the_submitted_job_action():
+    store.track_job("backup-run", "a", "backups.create", "starting")
+    store.track_job("backup-run", "a", "worlds.restore", "failed")
+    event = store.history("a")["items"][0]
+    assert event["action"] == "backups.create"
+    assert event["alert"] == "backup.failed"
+
+
+@pytest.mark.parametrize("phase,outcome", [
+    ("done", "succeeded"), ("failed", "failed"), ("cancelled", "skipped"),
+])
+def test_related_server_receives_the_same_job_outcome(phase, outcome):
+    store.track_job("transfer-run", "a", "worlds.copy", "starting")
+    store.track_job("transfer-run", "a", "worlds.copy", phase, related_server="b")
+    source = store.history("a")["items"][0]
+    destination = store.history("b")["items"][0]
+    assert source["outcome"] == destination["outcome"] == outcome
+    assert source["actor"] == destination["actor"]
+    assert destination["alert"] is None
+
+
 def test_resolver_wait_is_bounded(monkeypatch):
     done = threading.Event()
     def blocked_lookup(*args, **kwargs):

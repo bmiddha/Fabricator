@@ -177,4 +177,5 @@ before a worker is started, then preserves it for terminal `done`/`failed`/
 `error`/`cancelled` calls outside the request context. Give each run a unique key.
 Existing `install:` and `modpack:` progress adapters deliberately reuse their
 per-server key on a new `starting` transition. Call sites must not emit a terminal
-phase before the actual source operation has finished.
+phase before the actual source operation has finished. Terminal events retain the
+submitted action and actor; related-server records receive the same outcome.

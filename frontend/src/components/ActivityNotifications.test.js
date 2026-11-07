@@ -8,6 +8,7 @@ import { createServer } from 'vite'
 
 const dom = new JSDOM('<body></body>', { url: 'http://localhost/' })
 for (const key of ['window', 'document', 'Element', 'HTMLElement', 'SVGElement', 'Node', 'sessionStorage']) globalThis[key] = dom.window[key]
+globalThis.requestAnimationFrame = fn => setTimeout(fn, 0)
 const vite = await createServer({
   configFile: false, root: fileURLToPath(new URL('../..', import.meta.url)),
   server: { middlewareMode: true, watch: null, hmr: false },
@@ -135,6 +136,46 @@ test('saving a destination sends the secret once and clears the form', async () 
   assert.equal(saved.url, 'https://hooks.example/secret-canary')
   assert.equal(document.querySelector('form'), null)
   assert(!document.body.textContent.includes('secret-canary'))
+})
+
+test('refreshing delivery status does not hide a failed notification action', async () => {
+  globalThis.fetch = async (url, options) => {
+    if (options.method === 'POST') return Response.json({ error: 'Wait 60 seconds between test notifications' }, { status: 400 })
+    return Response.json({
+      destinations: [{ id: 'd1', name: 'Operations', kind: 'webhook', enabled: true, alerts: ['job.failed'] }],
+      deliveries: [], alerts: [],
+    })
+  }
+  mount(Notifications)
+  await settle()
+  button('Send test').click()
+  await settle()
+  button('Refresh').click()
+  await settle()
+  assert.match(document.querySelector('[role=alert]').textContent, /Wait 60 seconds/)
+})
+
+test('removing the edited destination clears its secret form', async () => {
+  let removed = false
+  globalThis.fetch = async (url, options) => {
+    if (options.method === 'DELETE') { removed = true; return Response.json({ success: true }) }
+    return Response.json({
+      destinations: removed ? [] : [{ id: 'd1', name: 'Operations', kind: 'webhook', enabled: true, alerts: ['job.failed'] }],
+      deliveries: [], alerts: [],
+    })
+  }
+  mount(Notifications)
+  await settle()
+  button('Edit destination').click()
+  await settle()
+  await input('notification-url', 'https://hooks.example/secret-canary')
+  button('Remove destination').click()
+  await settle()
+  button('Confirm').click()
+  await settle()
+  assert(removed)
+  assert.equal(document.querySelector('form'), null)
+  assert.equal(button('Save destination'), undefined)
 })
 
 test('links never bypass view permissions', () => {

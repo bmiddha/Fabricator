@@ -82,8 +82,7 @@ def save_destination(data, destination_id=None):
         destination_id = destination_id or uuid.uuid4().hex
         db.execute("INSERT OR REPLACE INTO destinations VALUES(?,?,?,?,?,?)",
                    (destination_id, name.strip(), kind, secret, int(enabled), json.dumps(sorted(set(alerts)))))
-        # Replacing a URL or changing subscriptions must not send previously
-        # queued sensitive operational metadata to a new recipient.
+        # Do not send queued metadata to a changed recipient or subscription.
         if old:
             db.execute("UPDATE deliveries SET state='cancelled',error='destination_changed' WHERE destination_id=? AND state='pending'", (destination_id,))
     return destination_id
@@ -154,8 +153,7 @@ def deliver_due(now=None):
     except transport.DeliveryError as exc:
         error = str(exc)
     except Exception:
-        # Preserve a visible failure even for unforeseen worker faults, without
-        # leaking exception text or leaving a claimed row stranded until reboot.
+        # Keep unforeseen failures visible without logging secret-bearing text.
         logger.error("Unexpected notification transport failure")
         error = "delivery_internal_error"
     state = "sent"

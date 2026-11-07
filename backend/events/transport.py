@@ -163,8 +163,6 @@ def deliver(url, kind, event):
         # Do not consume unbounded/untrusted response bodies. Redirects fail.
         if not 200 <= response.status < 300:
             raise DeliveryError(f"http_{response.status}")
-    except DeliveryError:
-        raise
     except (OSError, http.client.HTTPException):
         raise DeliveryError("connection_timeout" if timed_out.is_set() else "connection_failed") from None
     finally:

@@ -98,8 +98,7 @@ def best_effort(func):
         try:
             return func(*args, **kwargs)
         except Exception:
-            # Exception messages may contain paths or credentials. Log only the
-            # failed subsystem, not input or exception representations.
+            # Exception text may contain credentials.
             logger.error("Activity journal write failed (%s); operation was not rolled back", func.__name__)
             return None
     return wrapped
@@ -205,13 +204,14 @@ def track_job(key, server_id, action, phase, *, ref=None, related_server=None, r
             return
         if terminal:
             failed = phase in {"failed", "error"} or restart_error
-            alert = ("backup.failed" if action == "backups.create" else "job.failed") if failed else None
+            outcome = "failed" if failed else "skipped" if phase == "cancelled" else "succeeded"
+            who = json.loads(row["actor"])
+            alert = ("backup.failed" if row["action"] == "backups.create" else "job.failed") if failed else None
             _insert(db, server_id=row["server_id"], action=row["action"],
-                    outcome="failed" if failed else "skipped" if phase == "cancelled" else "succeeded",
-                    who=json.loads(row["actor"]), alert=alert, ref=ref)
+                    outcome=outcome, who=who, alert=alert, ref=ref)
             if related_server and related_server != row["server_id"]:
                 _insert(db, server_id=related_server, action=row["action"],
-                        outcome="failed" if failed else "succeeded", who=json.loads(row["actor"]))
+                        outcome=outcome, who=who)
             db.execute("UPDATE jobs SET terminal=1 WHERE key=?", (key,))
 
 
