@@ -5,7 +5,6 @@ import AppButton from './ui/AppButton.vue'
 import { get, post, del } from '../api/client'
 import { uploadModpackArchive } from '../api/modrinth'
 import { useAuthStore } from '../stores/auth'
-import { t } from '../i18n'
 
 const props = defineProps({ serverId: { type: String, required: true }, server: { type: Object, required: true } })
 const auth = useAuthStore()
@@ -36,9 +35,14 @@ const blocked = computed(() => Boolean(plan.value?.loaderChanges?.length))
 const ready = computed(() => !busy.value && (source.value === 'project' ? project.value.trim() : upload.value))
 
 async function operation(fn) {
+  if (working.value) return
+  clearTimeout(timer)
   working.value = true
   error.value = ''
-  try { await fn() } catch (e) { if (alive) error.value = e.message } finally { working.value = false }
+  try { await fn() } catch (e) { if (alive) error.value = e.message } finally {
+    working.value = false
+    if (!error.value) schedule()
+  }
 }
 function schedule() {
   clearTimeout(timer)
@@ -49,7 +53,6 @@ async function refresh() {
   if (!alive) return
   plans.value = result.plans
   plan.value = result.plans.find(p => p.id === plan.value?.id) || result.plans[0] || null
-  schedule()
 }
 function choose(id) {
   plan.value = plans.value.find(p => p.id === id) || null
@@ -76,7 +79,6 @@ async function prepare() {
     acknowledge.value = false
     execute.value = false
     confirmName.value = ''
-    schedule()
   })
 }
 async function run(action) {
@@ -87,7 +89,6 @@ async function run(action) {
     })
     if (!alive) return
     plan.value = result
-    schedule()
   })
 }
 async function remove() {

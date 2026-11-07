@@ -10,7 +10,6 @@ import difflib
 import hashlib
 import json
 import logging
-import os
 from pathlib import Path
 import re
 import shutil
@@ -29,11 +28,11 @@ SCOPES = ("mods", "config", "defaultconfigs")
 LOADERS = {"fabric", "quilt", "forge", "neoforge"}
 BUSY = {"preparing", "staging", "validating", "promoting"}
 WARNINGS = [
-    "Staging runs trusted pack code with the panel's operating-system permissions, not in a sandbox. Review configs for credentials, external databases and extra listeners before opting in.",
-    "Startup validation only checks a fresh Minecraft readiness signal and a clean stop. It does not prove gameplay, migrations, dependency version ranges or external-service safety.",
-    "Promotion never copies a staging world. After production has started with updated mods, recovery requires the matching world/config safety backup, not just older jars.",
-    "Unknown/local files are preserved. Dependency conflicts may still exist; review preserved mods and the staging console.",
-    "Client pack exports and existing shares remain immutable; generate and distribute a new client pack after promotion.",
+    "Pack code runs with panel OS permissions, not in a sandbox. Review credentials, external databases and extra listeners before running staging.",
+    "Startup checks readiness and shutdown only, not gameplay, migrations or complete dependency compatibility.",
+    "Staging worlds never replace production. After a world migration, restore the matching world/config backup; older jars alone are not a rollback.",
+    "Local files are preserved; review retained mods for dependency conflicts.",
+    "Existing client exports and shares stay unchanged. Distribute a new export after promotion.",
 ]
 
 
@@ -101,7 +100,6 @@ def _runtime(root):
 
 
 def _config_diff(root, incoming, rel, old, new):
-    from backend.auth.redaction import redact
     before, after = root / rel, incoming / rel
     if any(path.exists() and path.stat().st_size > 16 * 1024 for path in (before, after)):
         return ""
@@ -111,7 +109,7 @@ def _config_diff(root, incoming, rel, old, new):
     except UnicodeError:
         return ""
     diff = "".join(difflib.unified_diff(left, right, fromfile="current/" + rel, tofile="proposed/" + rel))
-    return redact(diff[:32 * 1024])
+    return diff[:32 * 1024]
 
 
 def _server(server_id):
@@ -207,9 +205,10 @@ def _dependency_review(root):
 def create(server_id, data, owner):
     with transfers.locked([server_id]):
         _server(server_id)
-        if any(plan["status"] in BUSY for plan in list_plans(server_id, owner)):
+        plans = list_plans(server_id, owner)
+        if any(plan["status"] in BUSY for plan in plans):
             raise ValueError("An update operation is already in progress")
-        if len(list_plans(server_id, owner)) >= 5:
+        if len(plans) >= 5:
             raise ValueError("Delete an old update plan before preparing another (limit five)")
         source = data.get("source")
         if source not in {"upload", "project"}:
@@ -371,11 +370,26 @@ def stage(server_id, plan_id, data):
             storage.update_server(staging_id, {"modpack": plan["modpack"], "modContent": plan["modContent"], "autoStart": "never"})
             client_pack._atomic_json(client_pack._source_path(target), plan["clientMetadata"])
             plan.update(status="staged", stagingSignature=_signature(storage.get_server(staging_id)),
-                        stagingFiles=_files(target), stagingProperties=transfers._digest(target / "server.properties"),
-                        stagingRuntime=_runtime(target))
+                        stagingFiles=_files(target), stagingRuntime=_runtime(target))
             _write(directory, plan)
             (target / ".fabricator-staging").unlink()
             transfers._sync_dir(target)
+
+
+def _check_staging(plan):
+    staging_id = plan.get("stagingId")
+    if not staging_id or staging_id == plan["serverId"]:
+        raise ValueError("Create an independent staging instance first")
+    staging, root = _server(staging_id)
+    if (_signature(staging) != plan["stagingSignature"] or _files(root) != plan["stagingFiles"]
+            or _runtime(root) != plan["stagingRuntime"]
+            or staging.get("serverIp") != "127.0.0.1" or staging.get("autoStart") != "never"):
+        raise StalePlan("Staging inputs changed; prepare a new review")
+    props = transfers.read_properties(root)
+    if (props.get("server-ip") != "127.0.0.1" or props.get("enable-rcon") != "false"
+            or props.get("enable-query") != "false" or props.get("management-server-enabled") != "false"):
+        raise ValueError("Staging listener isolation was changed")
+    return staging, root
 
 
 def validate(server_id, plan_id):
@@ -385,16 +399,7 @@ def validate(server_id, plan_id):
         raise ValueError("Create an independent staging instance first")
     with transfers.locked([server_id, staging_id]):
         _check(plan)
-        staging, root = _server(staging_id)
-        if (_signature(staging) != plan["stagingSignature"] or _files(root) != plan["stagingFiles"]
-                or _runtime(root) != plan["stagingRuntime"]
-                or transfers._digest(root / "server.properties") != plan["stagingProperties"]
-                or staging.get("serverIp") != "127.0.0.1" or staging.get("autoStart") != "never"):
-            raise StalePlan("Staging inputs changed; create and review a new plan")
-        props = transfers.read_properties(root)
-        if (props.get("server-ip") != "127.0.0.1" or props.get("enable-rcon") != "false"
-                or props.get("enable-query") != "false" or props.get("management-server-enabled") != "false"):
-            raise ValueError("Staging listener isolation was changed")
+        staging, _ = _check_staging(plan)
         registry = transfers.registry()
         requirement = resolve_required_java(staging["version"], staging["loader"])
         try:
@@ -414,10 +419,8 @@ def validate(server_id, plan_id):
             if stopped.get("status") != "stopped" or registry.get_status(staging_id).get("status") != "stopped":
                 raise ValueError("Could not stop staging after validation; stop it manually before continuing")
             storage.update_server_status(staging_id, "stopped")
-        if _files(root) != plan["stagingFiles"]:
-            raise StalePlan("Startup rewrote reviewed mods/configs; reconcile generated settings and prepare a new plan")
-        plan.update(status="validated", validatedToken=plan["reviewToken"], validatedAt=time.time(),
-                    validatedRuntime=_runtime(root))
+        _check_staging(plan)
+        plan.update(status="validated", validatedToken=plan["reviewToken"], validatedAt=time.time())
         _write(_path(server_id, plan_id), plan)
 
 
@@ -426,13 +429,9 @@ def promote(server_id, plan_id):
     staging_id = plan.get("stagingId")
     with transfers.locked([server_id, staging_id]):
         _, root = _check(plan)
-        staging, staging_root = _server(staging_id)
-        if (plan.get("validatedToken") != plan["reviewToken"]
-                or _signature(staging) != plan["stagingSignature"]
-                or _files(staging_root) != plan["stagingFiles"]
-                or _runtime(staging_root) != plan.get("validatedRuntime")
-                or transfers._digest(staging_root / "server.properties") != plan["stagingProperties"]):
+        if plan.get("validatedToken") != plan["reviewToken"]:
             raise StalePlan("Validate the unchanged staging instance before promotion")
+        _check_staging(plan)
         directory = _path(server_id, plan_id)
         entries, size = transfers._scan(root, lambda rel: rel.split("/")[0] == "backups")
         transfers._space(root, size * 3 + len(entries) * 1024 + 10240)
@@ -460,20 +459,25 @@ def promote(server_id, plan_id):
             transfers._publish_worlds(root, txn, journal)
             if _files(root) != plan["candidateFiles"]:
                 raise ValueError("Production publication verification failed")
-            storage.update_server(server_id, {"modpack": plan["modpack"], "modContent": plan["modContent"]})
-            client_pack._atomic_json(client_pack._source_path(root), plan["clientMetadata"])
+            _restore_metadata(server_id, root, journal, "new")
             journal["committed"] = True
             transfers._write_json(txn / "journal.json", journal)
         except Exception:
             transfers._rollback(root, txn, journal)
-            storage.update_server(server_id, {"modpack": journal["oldModpack"], "modContent": journal["oldContent"]})
-            client_pack._atomic_json(client_pack._source_path(root), journal["oldSource"])
+            _restore_metadata(server_id, root, journal, "old")
             transfers._remove(txn)
             raise
         plan.update(status="promoted", safetySnapshotId=safety["id"], promotedAt=time.time())
         _write(directory, plan)
         transfers._remove(txn)
         transfers.registry().invalidate(server_id)
+
+
+def _restore_metadata(server_id, root, journal, prefix):
+    storage.update_server(server_id, {
+        "modpack": journal[prefix + "Modpack"], "modContent": journal[prefix + "Content"],
+    })
+    client_pack._atomic_json(client_pack._source_path(root), journal[prefix + "Source"])
 
 
 def recover():
@@ -494,8 +498,7 @@ def recover():
         if not journal["committed"]:
             transfers._rollback(root, txn, journal)
         prefix = "new" if journal["committed"] else "old"
-        storage.update_server(server["id"], {"modpack": journal[prefix + "Modpack"], "modContent": journal[prefix + "Content"]})
-        client_pack._atomic_json(client_pack._source_path(root), journal[prefix + "Source"])
+        _restore_metadata(server["id"], root, journal, prefix)
         if journal["committed"]:
             directory = _path(server["id"], journal["planId"])
             plan = read(server["id"], journal["planId"])
@@ -514,8 +517,10 @@ def recover():
 def enqueue(action, server_id, plan_id, data=None):
     def worker():
         try:
-            {"prepare": prepare, "stage": lambda sid, pid: stage(sid, pid, data),
-             "validate": validate, "promote": promote}[action](server_id, plan_id)
+            if action == "stage":
+                stage(server_id, plan_id, data)
+            else:
+                {"prepare": prepare, "validate": validate, "promote": promote}[action](server_id, plan_id)
         except Exception as exc:
             logger.exception("Staged modpack %s failed", action)
             plan = read(server_id, plan_id)

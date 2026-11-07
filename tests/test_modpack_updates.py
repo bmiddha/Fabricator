@@ -217,9 +217,32 @@ def test_validation_never_accepts_exit_or_generated_config_edits(update_fixture,
         return {"status": "running"}
     monkeypatch.setattr(f.registry, "start_server", start)
     monkeypatch.setattr(f.registry, "_get_or_create_manager", lambda s: SimpleNamespace(startup_ready=True))
-    with pytest.raises(f.u.StalePlan, match="rewrote"):
+    with pytest.raises(f.u.StalePlan, match="Staging inputs changed"):
         f.u.validate("source", plan["id"])
     assert not f.u.read("source", plan["id"]).get("validatedToken")
+
+
+@pytest.mark.parametrize("relative", ["server.jar", "server.properties", "libraries/generated.jar"])
+def test_startup_runtime_changes_cannot_become_validated_inputs(update_fixture, monkeypatch, relative):
+    f = update_fixture
+    plan = f.stage(f.prepare())
+    staging_root = Path(f.storage.get_server(plan["stagingId"])["installPath"])
+
+    def start(record, **kw):
+        f.running.add(record["id"])
+        path = staging_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"changed during startup")
+        return {"status": "running"}
+
+    monkeypatch.setattr(f.registry, "start_server", start)
+    with pytest.raises(f.u.StalePlan, match="Staging inputs changed"):
+        f.u.validate("source", plan["id"])
+    assert not f.running
+    assert not f.u.read("source", plan["id"]).get("validatedToken")
+    with pytest.raises(f.u.StalePlan):
+        f.u.promote("source", plan["id"])
+    assert (f.root / "mods" / "old.jar").exists()
 
 
 def test_staging_changes_invalidate_successful_validation(update_fixture):

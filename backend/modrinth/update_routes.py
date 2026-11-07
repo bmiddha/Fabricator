@@ -4,8 +4,8 @@ import logging
 from flask import Blueprint, jsonify, request
 
 from backend.auth import permissions
-from backend.modrinth import mrpack, updates
-from backend.server import transfers
+from backend.modrinth import client_pack, mrpack, updates
+from backend.server import storage, transfers
 
 updates_bp = Blueprint("modpack_updates", __name__, url_prefix="/api/servers/<server_id>/modpack-updates")
 logger = logging.getLogger(__name__)
@@ -74,12 +74,12 @@ def detail(server_id, plan_id):
         if request.method == "DELETE":
             if plan["status"] in updates.BUSY:
                 raise ValueError("Wait for the active update operation before deleting its plan")
-            server = updates.storage.get_server(server_id)
+            server = storage.get_server(server_id)
             if server and (transfers._literal_root(server) / ".fabricator-update").exists():
                 raise ValueError("Recover the interrupted production update before deleting review data")
             directory = updates._path(server_id, plan_id)
             transfers._remove(directory)
-            client_metadata = updates.client_pack._source_path(directory / "incoming")
+            client_metadata = client_pack._source_path(directory / "incoming")
             client_metadata.unlink(missing_ok=True)
             return jsonify(deleted=True, stagingRetained=bool(plan.get("stagingId")))
         return jsonify(_public(plan))
@@ -116,7 +116,7 @@ def action(server_id, plan_id, action):
             raise ValueError("Explicitly opt in to executing trusted pack code on staging")
         if action == "promote":
             _require(server_id, "modpacks.promote", "backups.create")
-            server = updates.storage.get_server(server_id)
+            server = storage.get_server(server_id)
             if data.get("confirmName") != server["name"]:
                 raise ValueError("Type the production instance name to approve promotion")
         plan.update(status={"stage": "staging", "validate": "validating", "promote": "promoting"}[action])

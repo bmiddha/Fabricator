@@ -94,14 +94,14 @@ test('review does not start anything; conflicts require rebuilding before stagin
   assert.equal(calls.length, 1)
   assert.equal(calls[0].method, 'GET')
   assert.match(document.body.textContent, /Preserve local edit/)
-  assert.match(document.body.textContent, /1 previous entries, 2 proposed/)
+  assert.match(document.body.textContent, /Client files: 1 → 2/)
   assert(button('Fork & apply to staging').disabled)
   await input(document.querySelector('#update-staging-name'), 'pack-test')
   await input(checkbox('I reviewed the changes'), true)
   assert(!button('Fork & apply to staging').disabled)
   await input(checkbox('Replace this local file'), true)
   assert(button('Fork & apply to staging').disabled)
-  button('Prepare a new review with these replacements').click()
+  button('Review selected replacements').click()
   await settle()
   assert.deepEqual(calls.at(-1).data.replaceFiles, ['config/edited.json'])
   assert.equal(calls.at(-1).url, '/api/servers/production/modpack-updates')
@@ -157,4 +157,23 @@ test('runtime migrations display the mismatch without a stage action', async () 
   await mount({ ...basePlan, loaderChanges: [{ field: 'version', current: '1.21.1', proposed: '1.22' }] })
   assert.match(document.body.textContent, /Runtime migration required/)
   assert.equal(button('Fork & apply to staging'), undefined)
+})
+
+test('refresh requests cannot overlap other operations', async () => {
+  await mount()
+  let requests = 0
+  let finish
+  globalThis.fetch = () => {
+    requests += 1
+    return new Promise(resolve => { finish = resolve })
+  }
+  const refresh = button('Refresh status')
+  refresh.click()
+  refresh.click()
+  await settle()
+  assert.equal(requests, 1)
+  assert(button('Prepare review').disabled)
+  finish(Response.json({ plans: [basePlan] }))
+  await settle()
+  assert(!button('Prepare review').disabled)
 })

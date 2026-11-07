@@ -29,8 +29,8 @@ Managed deployments and MCP API tokens cannot use this workflow.
    This starts **only staging**, waits up to 180 seconds for a fresh Minecraft
    `Done (` readiness signal, and stops staging. An exited JVM, timeout,
    changed inputs/configs or failed stop cannot pass. Inspect staging's console
-   for details. Automatically rewritten configs need reconciliation and a new
-   review, not an implicit change to the approved candidate.
+   for details. Rewritten configs or runtime files require reconciliation and
+   a new review; startup cannot silently change the approved inputs.
 5. After validation, type the production instance's exact name and select
    **Back up & promote reviewed files**. Production and staging must be stopped.
    The worker rechecks runtime/metadata and content fingerprints under both
