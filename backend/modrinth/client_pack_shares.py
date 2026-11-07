@@ -16,12 +16,12 @@ MAX_LINKS = 20
 TOKEN_PATTERN = re.compile(r"[a-f0-9]{64}\.[A-Za-z0-9_-]{43}")
 
 
-def _path(server):
-    return packs._directory(server) / "shares.json"
+def _path(server, store=packs):
+    return store._directory(server) / "shares.json"
 
 
-def _records(path):
-    records = packs._read(path, [])
+def _records(path, store=packs):
+    records = store._read(path, [])
     if (not isinstance(records, list) or len(records) > MAX_LINKS
             or any(not isinstance(record, dict)
                    or not all(isinstance(record.get(key), str) for key in ("id", "server_id", "artifact_id", "token_hash"))
@@ -33,12 +33,12 @@ def _records(path):
                               for key in ("created_at", "expires_at"))
                    or not MIN_TTL <= record["expires_at"] - record["created_at"] <= MAX_TTL
                    for record in records)):
-        raise packs.PackError("Invalid client pack share state; check server storage")
+        raise store.PackError("Invalid archive share state; check server storage")
     return records
 
 
-def active(server):
-    records = _records(_path(server))
+def active(server, store=packs):
+    records = _records(_path(server, store), store)
     now = time.time()
     return [record for record in records if record["expires_at"] > now]
 
@@ -47,59 +47,60 @@ def public(record):
     return {key: record[key] for key in ("id", "artifact_id", "created_at", "expires_at")}
 
 
-def listing(server, owner):
-    records = active(server)
-    packs._atomic_json(_path(server), records)
+def listing(server, owner, store=packs):
+    records = active(server, store)
+    store._atomic_json(_path(server, store), records)
     return [public(record) for record in records if record["owner"] == owner]
 
 
-def create(server, artifact_id, ttl, owner):
+def create(server, artifact_id, ttl, owner, store=packs):
     if type(ttl) is not int or not MIN_TTL <= ttl <= MAX_TTL:
-        raise packs.PackError("Share expiry must be an integer from 3600 to 604800 seconds (1 hour-7 days)")
-    records = active(server)
+        raise store.PackError("Share expiry must be an integer from 3600 to 604800 seconds (1 hour-7 days)")
+    records = active(server, store)
     if len(records) >= MAX_LINKS:
-        raise packs.PackError("This server has 20 active share links; revoke a link or wait for expiry")
-    packs.artifact_path(server, artifact_id)
-    token = f'{packs._key(server["id"])}.{secrets.token_urlsafe(32)}'
+        raise store.PackError("This server has 20 active share links; revoke a link or wait for expiry")
+    store.artifact_path(server, artifact_id)
+    token = f'{store._key(server["id"])}.{secrets.token_urlsafe(32)}'
     now = time.time()
     record = {
         "id": uuid.uuid4().hex, "server_id": server["id"], "artifact_id": artifact_id,
-        "owner": owner, "token_hash": packs._key(token),
+        "owner": owner, "token_hash": store._key(token),
         "created_at": now, "expires_at": now + ttl,
     }
-    packs._atomic_json(_path(server), [*records, record])
-    return {**public(record), "url": "/client-pack-share#" + token}
+    store._atomic_json(_path(server, store), [*records, record])
+    return {**public(record), "url": getattr(store, "SHARE_PAGE", "/client-pack-share") + "#" + token}
 
 
-def revoke(server, share_id, owner):
-    records = active(server)
+def revoke(server, share_id, owner, store=packs):
+    records = active(server, store)
     matching = [record for record in records if record["id"] == share_id and record["owner"] == owner]
     if not matching:
         raise FileNotFoundError("Share link not found")
-    packs._atomic_json(_path(server), [record for record in records if record not in matching])
+    store._atomic_json(_path(server, store), [record for record in records if record not in matching])
 
 
-def resolve(token):
+def resolve(token, store=packs):
     if not isinstance(token, str) or not TOKEN_PATTERN.fullmatch(token):
         return None
-    directory = packs._root() / token.split(".", 1)[0]
-    records = _records(directory / "shares.json")
-    digest = packs._key(token)
+    directory = store._root() / token.split(".", 1)[0]
+    records = _records(directory / "shares.json", store)
+    digest = store._key(token)
     for record in records:
         if (secrets.compare_digest(record["token_hash"], digest)
                 and record["expires_at"] > time.time()
-                and packs._key(record["server_id"]) == directory.name):
+                and store._key(record["server_id"]) == directory.name):
             server = storage.get_server(record["server_id"])
             if server:
                 return server, record
     return None
 
 
-def remove_artifact(server, artifact_id, *, confirmed=False):
-    records = active(server)
+def remove_artifact(server, artifact_id, *, confirmed=False, store=packs):
+    records = active(server, store)
     if any(record["artifact_id"] == artifact_id for record in records) and not confirmed:
-        raise packs.PackError("This archive has active share links. Confirm deletion to invalidate all of them.")
-    path, _ = packs.artifact_path(server, artifact_id)
-    packs._atomic_json(_path(server), [record for record in records if record["artifact_id"] != artifact_id])
+        raise store.PackError("This archive has active share links. Confirm deletion to invalidate all of them.")
+    path, _ = store.artifact_path(server, artifact_id)
+    store._atomic_json(_path(server, store), [record for record in records if record["artifact_id"] != artifact_id])
     path.unlink()
-    path.with_suffix(".json").unlink(missing_ok=True)
+    metadata_path = getattr(store, "artifact_metadata_path", lambda p: p.with_suffix(".json"))
+    metadata_path(path).unlink(missing_ok=True)

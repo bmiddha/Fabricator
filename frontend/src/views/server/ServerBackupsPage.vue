@@ -8,6 +8,7 @@ import RestoreModeModal from '../../components/modals/RestoreModeModal.vue'
 import DeleteBackupConfigModal from '../../components/modals/DeleteBackupConfigModal.vue'
 import QuickBackupModal from '../../components/modals/QuickBackupModal.vue'
 import ImportWorldModal from '../../components/modals/ImportWorldModal.vue'
+import WorldExportsPanel from '../../components/WorldExportsPanel.vue'
 import ConfirmModal from '../../components/modals/ConfirmModal.vue'
 import { useBackupsStore } from '../../stores/backups'
 import { useAuthStore } from '../../stores/auth'
@@ -138,6 +139,9 @@ onUnmounted(() => {
         </AppButton>
       </div>
     </header>
+
+    <WorldExportsPanel v-if="can('worlds.export') || can('worlds.download')"
+      :server-id="serverStore.currentServerId" :server="serverStore.server" />
 
     <!-- Stats strip -->
     <BackupStatsStrip v-if="can('backups.list')" :summary="store.summary" :loading="store.summaryLoading" />

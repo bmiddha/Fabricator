@@ -41,6 +41,16 @@ for method, suffix in [
     ("POST", "/modpack-updates/<plan_id>/<action>"),
 ]:
     _server(method, suffix, "modpacks.install")
+_server("POST", "/world-exports", "worlds.read", "worlds.export")
+_server("GET", "/world-exports", "worlds.download")
+_server("GET", "/world-exports/<artifact_id>/download", "worlds.download")
+for method, suffix in [
+    ("GET", "/world-export-shares"),
+    ("POST", "/world-exports/<artifact_id>/shares"),
+    ("DELETE", "/world-export-shares/<share_id>"),
+    ("DELETE", "/world-exports/<artifact_id>"),
+]:
+    _server(method, suffix, "worlds.share", "worlds.download")
 # These handlers verify both instances, the operation-specific permissions and
 # job ownership before exposing metadata. Generic server.view is insufficient.
 _rule("GET", "/transfer-jobs/<job_id>", target="transfer-job")

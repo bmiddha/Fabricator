@@ -20,6 +20,7 @@ Errors are consistently `{"error": "<message>"}`. Anything under `/api` not list
 - [Server files](#server-files)
 - [Mods](#mods)
 - [Client modpack exports](#client-modpack-exports)
+- [World archive downloads](#world-archive-downloads)
 - [Private BlueMap maps](#private-bluemap-maps)
 - [Console & metrics](#console--metrics)
 - [Loader versions](#loader-versions)
@@ -135,6 +136,34 @@ Delivery records include `id`, `destination_id`, display `name`, `event_id`,
 Unix-seconds `created`/`next_at`, `state`, `attempts`, and fixed safe `error` code.
 States are `pending`, `sending`, `sent`, `failed`, `cancelled`, `suppressed`.
 No upstream response body or destination URL is returned.
+
+## World archive downloads
+
+See the [operator guide](deploy/world-downloads/README.md) for exact archive
+shape, exclusions, privacy, compatibility and deployment limits. Private
+routes are session-only (all MCP API tokens are denied); all capabilities are
+server-scoped and also require `server.view`.
+
+| Method | Path (prefix `/api`) | Capability / response |
+|---|---|---|
+| POST | `/servers/<id>/world-exports` | `worlds.read` + `worlds.export`; `{"world_id":"<discovered group>"}`, stopped-only synchronous generation; `201` metadata |
+| GET | `/servers/<id>/world-exports` | `worlds.download`; `{"exports":[...]}` retained metadata, active share count and pinned expiry |
+| GET | `/servers/<id>/world-exports/<artifact>/download` | `worlds.download`; streamed tar.gz attachment, `Content-Length`, `X-Archive-SHA256` |
+| GET | `/servers/<id>/world-export-shares` | `worlds.share` + `worlds.download`; own active links without secrets |
+| POST | `/servers/<id>/world-exports/<artifact>/shares` | Same rights; `{"expiry_seconds":3600,"acknowledge_privacy":true}`; `201` one-time fragment URL |
+| DELETE | `/servers/<id>/world-export-shares/<share>` | Same rights; revokes own link |
+| DELETE | `/servers/<id>/world-exports/<artifact>` | Same rights; shared archives need `{"confirm_shared":true}`; invalidates all linked grants |
+| POST | `/world-shares/download` | Public bearer redemption only; bounded `{"token":"..."}` body; streamed single immutable attachment |
+
+Metadata includes `id`, `filename`, `created_at`, `world`, `loader`,
+`loader_version`, `size`, `source_bytes`, `file_count` and `sha256`. Share
+metadata includes `id`, `artifact_id`, `created_at`, `expires_at`; a secret
+`url` appears only on creation. Public links expire/revoke/delete to `404`,
+throttling returns `429` with `Retry-After`, busy downloads `503`, stopped/
+content/storage-policy conflicts `409`, malformed private input `400`, and
+storage I/O failure `500` (public storage failure is `503`). No bearer can
+mutate a world or select another artifact. Already-downloaded/in-flight bytes
+cannot be recalled. Public requests omit cookies and use no URL token.
 
 ---
 
@@ -422,12 +451,14 @@ route requires an authenticated session except the ones listed below.
 - **Setup mode** — auth is enabled but no credential exists yet. The app boots locked and only
   serves `POST /api/auth/setup`, `GET /api/auth/status` and `GET /api/health` until a password is set.
 - **Configured** — normal login. Public routes are `POST /api/auth/login`, `GET /api/auth/status`
-  and `GET /api/health`, plus the grant-validated `POST /api/client-pack-shares/download`;
+  and `GET /api/health`, plus the grant-validated `POST /api/client-pack-shares/download`
+  and `POST /api/world-shares/download`;
   everything else needs the session cookie.
 - **OIDC** — one configured provider replaces password login/setup. Public routes
   are `GET /api/auth/oidc/login`, `GET /api/auth/oidc/callback`,
   `GET /api/auth/status`, `GET /api/health` and the grant-validated
-  `POST /api/client-pack-shares/download`. Password setup/login/enable/disable/change
+  `POST /api/client-pack-shares/download` and `POST /api/world-shares/download`.
+  Password setup/login/enable/disable/change
   return `409`. Protected endpoints also require resolved action permissions.
 
 Unauthenticated requests get `401 {"error": "authentication required"}` (or `{"error": "setup required"}`

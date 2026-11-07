@@ -1821,6 +1821,12 @@ def delete_server_route(server_id, server):
     # belongs to the user.
     removal_error = None
     try:
+        from backend.server.world_exports import delete_state as delete_world_exports
+        delete_world_exports(server)
+    except OSError as exc:
+        logger.exception('Could not remove world exports for %s', server_id)
+        removal_error = f'World export cleanup failed: {exc}'
+    try:
         from backend.modrinth.client_pack import delete_state
         delete_state(server, install_path)
     except OSError as exc:

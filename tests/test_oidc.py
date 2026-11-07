@@ -284,6 +284,7 @@ def test_route_permission_coverage(oidc_app):
         ("GET", "/api/servers/<server_id>/map/view/<ticket>/"),
         ("GET", "/api/servers/<server_id>/map/view/<ticket>/<path:path>"),
         ("POST", "/api/client-pack-shares/download"),
+        ("POST", "/api/world-shares/download"),
         ("GET", "/api/health"), ("GET", "/api/auth/status"), ("POST", "/api/auth/logout"),
         ("GET", "/api/auth/oidc/login"), ("GET", "/api/auth/oidc/callback"),
         *(("POST", "/api/auth/" + suffix) for suffix in ["setup", "login", "enable", "disable", "change-password"]),

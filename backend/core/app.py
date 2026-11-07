@@ -21,6 +21,7 @@ from backend.schedules.routes import schedules_bp
 from backend.dns.routes import dns_bp
 from backend.velocity.routes import velocity_bp
 from backend.server.transfer_routes import transfers_bp
+from backend.server.world_export_routes import world_exports_bp, world_share_bp
 from backend.maps.routes import maps_bp
 from backend.diagnostics.routes import diagnostics_bp
 from backend.events.routes import events_bp
@@ -82,6 +83,8 @@ def create_app() -> Flask:
     app.before_request(capture_actor)
     app.after_request(record_response)
     init_events(app)
+    app.register_blueprint(world_exports_bp)
+    app.register_blueprint(world_share_bp)
 
     # One-time startup cleanup: flip stale 'installing'/'starting' statuses
     # left over from a previous run. Tolerates a missing/malformed index.
@@ -91,6 +94,8 @@ def create_app() -> Flask:
     recover_transfers()
     from backend.modrinth.updates import recover as recover_updates
     recover_updates()
+    from backend.server.world_exports import recover as recover_world_exports
+    recover_world_exports()
 
     # Same idea for abandoned world uploads (up to 10 GiB each). They are
     # stranded by exactly the unclean shutdown this boot follows, so sweeping
@@ -136,7 +141,7 @@ def create_app() -> Flask:
             return send_from_directory(static_folder_path, path)
 
         if index_file.exists():
-            if path == "client-pack-share":
+            if path in {"client-pack-share", "world-share"}:
                 response = send_from_directory(static_folder_path, "index.html")
                 response.headers["Cache-Control"] = "no-store"
                 response.headers["Referrer-Policy"] = "no-referrer"

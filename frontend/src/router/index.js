@@ -20,6 +20,7 @@ import ServerGeneralSettingsPage from '../views/server/ServerGeneralSettingsPage
 import { canVisit } from '../utils/permissions'
 
 const routes = [
+  { path: '/world-share', name: 'WorldShare', component: () => import('../views/WorldSharePage.vue') },
   { path: '/client-pack-share', name: 'ClientPackShare', component: () => import('../views/ClientPackSharePage.vue') },
   { path: '/login', name: 'Login', component: LoginPage },
   { path: '/setup', name: 'Setup', component: SetupPage },
@@ -66,7 +67,7 @@ const router = createRouter({
 })
 
 router.beforeEach(async (to) => {
-  if (to.name === 'ClientPackShare') return true
+  if (to.name === 'ClientPackShare' || to.name === 'WorldShare') return true
   const auth = useAuthStore()
   if (!auth.checked) {
     try {
