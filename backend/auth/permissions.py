@@ -40,6 +40,8 @@ for method in ("PUT", "DELETE"):
 _rule("POST", "/notifications/destinations/<destination_id>/test", "notifications.manage")
 _server("GET", "/activity", "activity.read")
 _server("GET", "/alerts", "activity.read")
+_server("GET", "/chat", "chat.read")
+_server("POST", "/chat", "chat.send")
 _server("POST", "/transfers/<kind>/preview", "server.view")
 _server("POST", "/transfers/<kind>", "server.view")
 _server("GET", "/worlds", "worlds.read")

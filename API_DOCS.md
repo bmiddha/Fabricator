@@ -23,6 +23,7 @@ Errors are consistently `{"error": "<message>"}`. Anything under `/api` not list
 - [World archive downloads](#world-archive-downloads)
 - [Private BlueMap maps](#private-bluemap-maps)
 - [Console & metrics](#console--metrics)
+- [Server chat](#server-chat)
 - [Loader versions](#loader-versions)
 - [Java management](#java-management)
 - [Players](#players)
@@ -39,6 +40,109 @@ Errors are consistently `{"error": "<message>"}`. Anything under `/api` not list
 - [Security notes](#security-notes)
 
 ---
+
+## Server chat
+
+Session-only, per-server `GET` and `POST /api/servers/<server_id>/chat`.
+Both require `server.view`; reading requires **`chat.read`**, sending requires
+**`chat.send`**, independently of console/log permissions. OIDC `admin`
+includes both; viewer/operator roles do not acquire chat rights automatically.
+Custom roles can grant reading without sending. MCP tokens cannot access either
+endpoint. Normal authentication/grant revocation applies on every request;
+responses use `Cache-Control: no-store`.
+
+GET returns `{items,nextBefore,hasMoreAfter,latestId,earliestId,outcomes,
+supported,supportNote,running,ready,sender,canSend,captureErrors,
+retentionSeconds,maxItems,maxTotalItems,maxMessageLength}`. Items contain
+`{id,ts,kind,sender,message}`; `kind` is `player` or `fabricator`. Panel
+submissions additionally have `status:"pending"|"submitted"|"failed"`.
+The timestamp is Fabricator's absolute observation/submission time, not a
+reconstructed date from the JVM's clock. Immutable increasing capture IDs order
+messages, including those with identical timestamps.
+
+**Chat is persisted across panel/server restarts** in `chat/chat.sqlite3` beside
+`servers.json` in Fabricator's data directory. The directory is mode `0700`,
+database `0600`; mount/preserve this data directory for container/panel upgrades.
+SQLite transactions store only recognized stdout player chat, attributed panel
+submission intents and their outcomes, with internal actor/source provenance.
+No stderr, raw console, secrets/config output or existing log files are imported.
+History begins when this integration observes chat; it is **not a complete
+retroactive chat archive**. Previously observed records remain readable when the
+server is stopped, the manager is gone, or a new loader is unsupported.
+
+Retention is **7 days, 10,000 rows per server and 100,000 rows installation-wide**,
+whichever bound is reached first. The oldest capture IDs are evicted for count
+bounds; age-expired rows are deleted on the next journal read/write. Retention
+survives restart and is not extended by reads. SQLite secure deletion is enabled;
+external backups, snapshots and filesystem recovery are not guaranteed erased.
+Deleting a server revokes access through the server resolver but does not
+immediately erase its journal rows; normal retention removes them. There is no
+chat deletion endpoint. Already viewed/copied history cannot be revoked.
+
+The default page is the latest 100 messages, returned oldest-first. `limit=1..200`
+bounds a page. `before=<positive capture ID>` requests an earlier page;
+`nextBefore` is the exclusive cursor for another earlier page, or `null`.
+`after=<positive capture ID>` requests the next observed messages in ascending
+ID order; use the last returned item's ID to advance, and drain `hasMoreAfter`
+before polling again. `before` and `after` are mutually exclusive. IDs are opaque
+and may have gaps. `outcomes` refreshes the status of the latest 200 earlier
+panel submissions on delta reads; no unrelated actors/payloads are exposed.
+The chat component loads earlier pages and deduplicates by capture ID.
+Repeated capture of the same server/run/stdout sequence is deduplicated in
+storage; identical messages from distinct observations or user sends are kept.
+
+Supported loaders: vanilla, Fabric, Quilt, Forge, NeoForge, Paper, Purpur,
+Pufferfish, Folia, Spigot, Bukkit and CraftBukkit. Supported versions are stable
+Java releases `1.13+` (namespaced Brigadier commands) in the `1.x` scheme and `26.x`–`29.x`; snapshots,
+pre-releases, unknown versions and Velocity proxies explicitly report unsupported.
+The parser accepts only timestamped INFO lines with standard `<player> message`
+(optionally `[Not Secure]`), the server/async-chat thread prefix, legacy Bukkit
+single-bracket prefix, or known Minecraft Forge categories. ANSI SGR colors are
+removed. Custom plugin/decorated formats, system chat, whispers, announcements,
+join/leave messages and console output are deliberately excluded. A recognized
+loader does not guarantee its plugins preserve this format. Player names are
+log-derived, **not proof of a signed/authenticated Minecraft identity**.
+The modern standard logging shape is also visible in
+[Paper's upstream `logChatMessage` implementation](https://github.com/PaperMC/Paper/blob/main/paper-server/patches/sources/net/minecraft/server/MinecraftServer.java.patch).
+
+POST accepts only `{"message":"Hello players"}`. Sender overrides and commands
+are rejected. Identity comes from the authenticated panel session: a bounded
+verified OIDC ID-token `name`/`preferred_username` claim (profile scope requested),
+falling back to the subject; shared-password sessions are honestly **Shared admin**.
+Sending is disabled when authentication is disabled. Display names are untrusted
+literal text; controls/format markers and attribution brackets are normalized.
+The command is a fixed `minecraft:tellraw @a` with a JSON-encoded text-only
+component: `[Fabricator · display name] message`. This is a server system message,
+**not impersonation or signed player chat**.
+
+Messages must be nonblank and at most 256 Unicode code points; Unicode control/
+format/surrogate characters, newlines, paragraph separators and Minecraft section
+formatting codes are rejected. Per-manager limits are 5 attempts per authenticated
+user and 30 total per server in a rolling 60 seconds (shared-password sessions
+share one user limit); retries/failed writes count, server restarts preserve the
+limits within a manager's lifetime (panel process replacement resets rates).
+POST never starts a server and checks readiness again at the process write.
+Success is `202 {item,status:"submitted"}`: written/flushed to the JVM's stdin,
+**not confirmation that players received it**. Command acceptance, plugin behavior,
+server stalls and actual player receipt cannot be confirmed by this channel.
+The submission intent is durably saved **before** the process write. A pending
+intent after an interrupted request/restart has an unknown outcome and must not
+be presented as delivery or blindly resent. Failed writes are saved as failed,
+but may have partially reached the server. If intent persistence fails, `503`
+with `submitted:false` is returned and no command is sent. If outcome persistence
+fails after the write, `503` explicitly reports uncertainty and whether the
+write succeeded; the pending intent remains, not a success-shaped fallback.
+
+Errors: malformed input `400`; auth/permission failures `401`/`403` or inaccessible
+server `404`; stopped/not-ready server `409`; unsupported loader/version `422`;
+rate bound `429` with `Retry-After` and `retryAfter`; failed/unreachable stdin or
+unavailable/corrupt journal `503`. Journal read failure never falls back to raw
+console or volatile history. Player-capture persistence failures are logged
+without their message/exception contents and exposed as current-run
+`captureErrors`; missed messages cannot be reconstructed automatically.
+Do not blindly retry a failed write: a partial write may already have reached the
+server. Activity records only `chat.send`, authenticated actor, server and accepted/
+failed outcome, never message text, raw command or exception payload.
 
 ## Staged modpack updates
 

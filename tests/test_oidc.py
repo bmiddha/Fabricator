@@ -543,6 +543,18 @@ def test_signed_login_success_replay_and_local_logout(oidc_app, fake_provider):
     assert client.get("/api/servers").status_code == 401
 
 
+def test_verified_display_name_is_bounded_and_not_a_sender_override(oidc_app, fake_provider):
+    client = oidc_app.test_client()
+    state = start_login(oidc_app, client, fake_provider)
+    fake_provider["claims"] = {"name": "Alice\n[admin]\u202e" + "x" * 100}
+    response = client.get("/api/auth/oidc/callback", query_string={"state": state, "code": "code"})
+    assert response.status_code == 303
+    with client.session_transaction() as session:
+        assert session["sub"] == "alice"
+        assert session["oidc_display_name"].startswith("Alice(admin)")
+        assert len(session["oidc_display_name"]) == 48
+
+
 @pytest.mark.parametrize("claims", [
     {"iss": "https://other.example"}, {"aud": "another-client"}, {"nonce": "wrong"},
     {"exp": 1}, {"sub": "not-configured"}, {"azp": "other"},

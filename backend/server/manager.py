@@ -10,6 +10,7 @@ import uuid
 from typing import Iterable, List, Optional
 
 from backend.server import tps as tps_probe
+from backend.server.chat import ChatState
 from backend.utils import platform as platform_utils
 from backend.utils.java import parse_java_major
 from backend.utils.time import iso_z_now
@@ -201,6 +202,7 @@ class ServerManager:
         self._stopping = False
         self.server_id: Optional[str] = None
         self._intentional_stop = threading.Event()
+        self.chat = ChatState()
 
     def _parse_command(self, command: Optional[Iterable[str]]) -> Optional[List[str]]:
         if command is None:
@@ -338,12 +340,17 @@ class ServerManager:
     def _start_log_streams(self) -> None:
         if not self._process:
             return
+        chat_run_id = self.diagnostics_run_id
+        chat_server_id, chat_loader, chat_version = self.server_id, self.loader, self.version
 
         def _stream(pipe, buffer: List[tuple[str, str]], is_stdout: bool):
-            for line in iter(pipe.readline, ""):
+            for sequence, line in enumerate(iter(pipe.readline, "")):
                 # Detection runs on the ANSI-stripped, prefix-anchored line (the
                 # raw line stays in the buffer for the colour console viewer).
                 clean = self._ANSI_RE.sub("", line)
+                if is_stdout:
+                    self.chat.capture(clean, chat_loader, chat_version, chat_server_id,
+                                      f"{chat_run_id}:{sequence}")
                 # Read before buffering: the reply to our own TPS probe is
                 # consumed here and kept out of the console the user reads, so
                 # a periodic poll does not scroll their log away. Runs outside
@@ -409,6 +416,7 @@ class ServerManager:
         # Belongs to the run, like the buffers: cleared before the stream threads
         # that set it are started.
         self._ready_event.clear()
+        self.chat.clear()
         self._stdout_thread = threading.Thread(
             target=_stream, args=(self._process.stdout, self._stdout_buffer, True), daemon=True
         )
@@ -913,7 +921,7 @@ class ServerManager:
                 return True
         return False
 
-    def send_command(self, command: str) -> dict:
+    def send_command(self, command: str, *, require_ready: bool = False) -> dict:
         """Send a console command to the running server process."""
         if not command.strip():
             return {"success": False, "message": "Command must not be empty"}
@@ -921,6 +929,8 @@ class ServerManager:
         with self._lock:
             if not self.is_running or not self._process:
                 return {"success": False, "message": "Server is not running"}
+            if require_ready and (not self.startup_ready or self._stopping):
+                return {"success": False, "message": "Server is not ready"}
 
             stdin = self._process.stdin
             if not stdin or stdin.closed:
@@ -935,10 +945,13 @@ class ServerManager:
             except Exception as exc:  # pragma: no cover - best effort logging
                 if intentional:
                     self._intentional_stop.clear()
-                logger.exception("Failed to send command to server")
+                if require_ready:
+                    logger.error("Failed to submit chat command to server")
+                else:
+                    logger.exception("Failed to send command to server")
                 return {
                     "success": False,
-                    "message": f"Failed to send command: {exc}"
+                    "message": "Failed to submit chat command" if require_ready else f"Failed to send command: {exc}"
                 }
 
         return {"success": True, "message": "Command sent"}

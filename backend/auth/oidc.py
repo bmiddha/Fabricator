@@ -84,7 +84,7 @@ class OIDC:
 
     def client(self):
         client = OAuth2Session(
-            self.client_id, self.client_secret, scope="openid",
+            self.client_id, self.client_secret, scope="openid profile",
             redirect_uri=self.redirect_uri, code_challenge_method="S256",
         )
         client.register_compliance_hook("access_token_response", _token_response)
@@ -239,6 +239,10 @@ def callback():
             return _failure("denied")
         session.clear()
         session.update(authenticated=True, auth_method="oidc", issuer=oidc.issuer, sub=subject)
+        from backend.server.chat import display_name
+        claimed_name = claims.get("name") or claims.get("preferred_username")
+        if isinstance(claimed_name, str) and claimed_name.strip():
+            session["oidc_display_name"] = display_name(claimed_name)
         session.permanent = True
         result = redirect(transaction["return"], 303)
         result.headers["Cache-Control"] = "no-store"

@@ -57,6 +57,12 @@ def _reset_modrinth_state():
 
 
 @pytest.fixture(autouse=True)
+def _isolated_chat_state(tmp_path, monkeypatch):
+    from backend.server import chat_storage
+    monkeypatch.setattr(chat_storage, "db_path", lambda: tmp_path / "chat-state" / "chat.sqlite3")
+
+
+@pytest.fixture(autouse=True)
 def _isolated_events(tmp_path, monkeypatch):
     from backend.events import store
     monkeypatch.setattr(store, "db_path", lambda: tmp_path / "event-state" / "events.sqlite3")
