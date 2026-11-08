@@ -88,6 +88,14 @@ before polling again. `before` and `after` are mutually exclusive. IDs are opaqu
 and may have gaps. `outcomes` refreshes the status of the latest 200 earlier
 panel submissions on delta reads; no unrelated actors/payloads are exposed.
 The chat component loads earlier pages and deduplicates by capture ID.
+Its full-height flex layout keeps the composer anchored while the conversation
+scrolls; consecutive messages from the same source/sender are grouped. The
+composer shows only `portal - <display name>` and an inline send icon; detailed
+retention/delivery semantics remain in this API reference. Player heads reuse
+the existing username-based `mc-heads.net` avatar lookup for standard Java names,
+without a referrer, and fall back to fixed-size initials on failure or nonstandard
+names. Heads are cosmetic, not authentication evidence. Panel identities use a
+local Fabricator marker, never a Minecraft player head.
 Repeated capture of the same server/run/stdout sequence is deduplicated in
 storage; identical messages from distinct observations or user sends are kept.
 

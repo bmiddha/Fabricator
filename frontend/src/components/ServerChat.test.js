@@ -95,7 +95,7 @@ test('chat reads only its endpoint, escapes content and sends no identity overri
   assert.deepEqual(JSON.parse(calls[1][1].body), { message: 'Hello players' })
   assert.equal(document.querySelector('input').value, '')
   assert.match(document.body.textContent, /Fabricator · Alice/)
-  assert.match(document.body.textContent, /not confirmed delivered/)
+  assert.equal(document.querySelector('.server-chat__identity').textContent.trim(), 'portal - Alice')
 })
 
 test('read-only and console-only users cannot send or read through console grants', async () => {
@@ -111,7 +111,7 @@ test('no chat read permission does not fetch or expose a composer', async () => 
   mount(['server.console.execute', 'chat.send'])
   await settle()
   assert.equal(document.querySelector('form'), null)
-  assert.match(document.body.textContent, /do not have permission to read/)
+  assert.match(document.body.textContent, /do not have access/)
 })
 
 test('stopped, unsupported and unattributed chat disable sending honestly', async () => {
@@ -119,15 +119,15 @@ test('stopped, unsupported and unattributed chat disable sending honestly', asyn
   mount()
   await settle()
   assert(document.querySelector('input').disabled)
-  assert.match(document.body.textContent, /stopped or still starting/)
-  assert.match(document.body.textContent, /authentication is disabled/)
+  assert.match(document.body.textContent, /Server is not ready/)
+  assert.equal(document.querySelector('.server-chat__identity').textContent.trim(), 'portal')
 })
 
-test('unsupported chat explains parsing limits', async () => {
+test('unsupported chat remains explicit without instructional boilerplate', async () => {
   globalThis.fetch = async () => response({ items: [], supported: false, ready: false, canSend: false })
   mount()
   await settle()
-  assert.match(document.body.textContent, /custom\/plugin formats are not parsed/)
+  assert.match(document.body.textContent, /Chat is not supported for this server/)
   assert(document.querySelector('button').disabled)
 })
 
@@ -206,10 +206,10 @@ test('saved history pages are prepended in capture order without losing recent m
   document.querySelector('.server-chat__transcript button').click()
   await settle()
   assert.match(calls[1], /before=3&limit=200/)
-  assert.deepEqual([...document.querySelectorAll('.server-chat__message > p')].map(p => p.textContent),
+  assert.deepEqual([...document.querySelectorAll('.server-chat__bubble')].map(p => p.textContent),
     ['first saved', 'second saved', 'third saved', 'fourth saved'])
   assert.equal(document.querySelector('.server-chat__transcript button'), null)
-  assert.match(document.body.textContent, /saved across restarts for up to 7 days/)
+  assert.doesNotMatch(document.body.textContent, /7 days|10,000|not confirmed delivered/)
 })
 
 test('delta polling updates persisted outcomes and does not duplicate replayed items', async () => {
@@ -227,6 +227,7 @@ test('delta polling updates persisted outcomes and does not duplicate replayed i
         items: [{ ...item, id: 2, message: 'new saved' }],
         outcomes: [{ id: 1, status: 'submitted' }], latestId: 2,
       })
+
       return response({ items: [{ ...item, kind: 'fabricator', sender: 'Alice',
         id: 1, status: 'pending', message: 'original send' }], latestId: 1 })
     }
@@ -242,4 +243,79 @@ test('delta polling updates persisted outcomes and does not duplicate replayed i
   } finally {
     globalThis.setTimeout = originalTimeout
   }
+})
+
+test('player heads reuse the existing avatar with fixed size, privacy and failure fallback', async () => {
+  globalThis.fetch = async () => response({ items: [{ ...item, id: 1, sender: 'Alex' }] })
+  mount()
+  await settle()
+  const head = document.querySelector('.server-chat__message .player-avatar')
+  const img = head.querySelector('img')
+  assert.equal(img.getAttribute('src'), 'https://mc-heads.net/avatar/Alex/32')
+  assert.equal(img.getAttribute('referrerpolicy'), 'no-referrer')
+  assert.equal(img.getAttribute('loading'), 'lazy')
+  assert.equal(head.style.width, '32px')
+  assert.equal(head.style.height, '32px')
+  img.dispatchEvent(new dom.window.Event('error'))
+  await settle()
+  assert.equal(head.querySelector('img'), null)
+  assert.equal(head.textContent, 'A')
+  assert.equal(head.style.width, '32px')
+})
+
+test('consecutive messages group by actual sender and source without assigning panel users Minecraft heads', async () => {
+  const ts = '2026-11-08T00:00:00Z'
+  globalThis.fetch = async () => response({ items: [
+    { ...item, id: 1, sender: 'Alex', message: 'first', ts },
+    { ...item, id: 2, sender: 'Alex', message: 'second', ts },
+    { ...item, id: 3, sender: 'Bob', message: 'third', ts },
+    { ...item, id: 4, kind: 'fabricator', sender: 'Alice', message: 'from the portal', ts, status: 'submitted' },
+    { ...item, id: 5, kind: 'player', sender: 'Alice', message: 'same name, different source', ts },
+    { ...item, id: 6, kind: 'player', sender: 'Alice', message: 'five minutes later', ts: '2026-11-08T00:05:00Z' },
+    { ...item, id: 7, kind: 'player', sender: 'Alice', message: 'older timestamp', ts },
+  ] })
+  mount()
+  await settle()
+  const rows = [...document.querySelectorAll('.server-chat__message')]
+  assert(rows[1].classList.contains('is-continued'))
+  assert.equal(rows[1].querySelector('img'), null)
+  assert(rows[1].querySelector('.server-chat__author').classList.contains('server-chat__sr-only'))
+  assert(!rows[2].classList.contains('is-continued'))
+  assert(rows[3].classList.contains('is-own'))
+  assert.equal(rows[3].querySelector('img'), null)
+  assert.equal(rows[3].querySelector('.server-chat__portal-avatar').textContent, 'F')
+  assert(!rows[4].classList.contains('is-continued'))
+  assert(!rows[4].classList.contains('is-own'))
+  assert(!rows[5].classList.contains('is-continued'))
+  assert(!rows[6].classList.contains('is-continued'))
+})
+
+test('send icon stays inside the message box and sending preserves the viewport and composer nodes', async () => {
+  let finish
+  globalThis.fetch = async (url, options) => options.method === 'POST'
+    ? new Promise(resolve => { finish = resolve })
+    : response()
+  mount()
+  await settle()
+  const viewport = document.querySelector('.server-chat__viewport')
+  const form = document.querySelector('form')
+  const input = document.querySelector('input')
+  const button = document.querySelector('.server-chat__send')
+  assert.equal(button.getAttribute('aria-label'), 'Send message')
+  assert.equal(button.parentElement, input.parentElement)
+  assert(button.querySelector('svg'))
+  assert.doesNotMatch(document.body.textContent, /Sending as|7 days|10,000|not confirmed delivered/)
+  submit('Message from the portal')
+  await settle()
+  assert.equal(button.getAttribute('aria-busy'), 'true')
+  assert(button.querySelector('.server-chat__send-spinner'))
+  assert.equal(document.querySelector('.server-chat__viewport'), viewport)
+  assert.equal(document.querySelector('form'), form)
+  finish(Response.json({ item: { ...item, id: 'sent', kind: 'fabricator', sender: 'Alice',
+    message: 'Message from the portal', status: 'submitted' } }, { status: 202 }))
+  await settle()
+  assert.equal(document.querySelector('.server-chat__viewport'), viewport)
+  assert.equal(document.querySelector('form'), form)
+  assert.equal(document.querySelector('.server-chat__send'), button)
+  assert.equal(button.getAttribute('aria-busy'), 'false')
 })

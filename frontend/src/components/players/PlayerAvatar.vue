@@ -50,6 +50,7 @@ const src = computed(() =>
       :width="size"
       :height="size"
       alt=""
+      loading="lazy"
       referrerpolicy="no-referrer"
       @load="imgLoaded = true"
       @error="imgFailed = true"

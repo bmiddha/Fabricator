@@ -3,6 +3,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { get, post } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import AppButton from './ui/AppButton.vue'
+import PlayerAvatar from './players/PlayerAvatar.vue'
 import { t } from '../i18n'
 
 const props = defineProps({ serverId: { type: String, required: true } })
@@ -23,6 +24,16 @@ const olderBusy = ref(false)
 const historyError = ref('')
 const allowed = computed(() => canSend.value && state.value?.canSend && !loading.value
   && !error.value && !sending.value && now.value >= retryUntil.value)
+const conversation = computed(() => (state.value?.items || []).map((item, index, items) => {
+  const previous = items[index - 1]
+  const gap = previous ? Date.parse(item.ts) - Date.parse(previous.ts) : NaN
+  return {
+    ...item,
+    continued: Boolean(previous && previous.kind === item.kind && previous.sender === item.sender
+      && gap >= 0 && gap < 5 * 60 * 1000),
+    own: item.kind === 'fabricator' && item.sender === state.value?.sender,
+  }
+}))
 let generation = 0
 let timer
 let controller
@@ -156,87 +167,154 @@ onUnmounted(() => { generation++; clearTimeout(timer); controller?.abort() })
 <template>
   <section class="server-chat" :aria-label="$t('chat.title')">
     <header class="server-chat__header">
-      <div>
-        <h2>{{ $t('chat.title') }}</h2>
-        <p>{{ $t('chat.intro') }}</p>
-      </div>
-      <span v-if="state" class="server-chat__state">
+      <h2>{{ $t('chat.title') }}</h2>
+      <span v-if="state" class="server-chat__state" :class="{ 'is-ready': state.ready && state.supported }">
+        <span aria-hidden="true" class="server-chat__status-dot"></span>
         {{ $t(!state.supported ? 'chat.unsupportedLabel' : state.ready ? 'chat.live' : 'chat.offline') }}
       </span>
     </header>
-    <p v-if="!canRead" class="server-chat__notice">{{ $t('chat.noRead') }}</p>
-    <p v-else-if="error" class="server-chat__error" role="alert">{{ error }}</p>
-    <template v-else>
-      <p v-if="loading" class="server-chat__notice" role="status">{{ $t('chat.loading') }}</p>
-      <p v-else-if="!state?.supported" class="server-chat__notice">{{ $t('chat.unsupported') }}</p>
-      <p v-else-if="!state.ready" class="server-chat__notice">{{ $t('chat.stopped') }}</p>
-      <p v-if="state?.captureErrors" class="server-chat__error" role="alert">{{ $t('chat.captureError') }}</p>
-      <p v-if="historyError" class="server-chat__error" role="alert">{{ historyError }}</p>
-      <div ref="transcript" class="server-chat__transcript" role="log" :aria-label="$t('chat.messages')"
+    <div class="server-chat__viewport">
+      <div class="server-chat__notices">
+        <p v-if="!canRead" class="server-chat__notice">{{ $t('chat.noRead') }}</p>
+        <p v-else-if="error" class="server-chat__error" role="alert">{{ error }}</p>
+        <template v-else>
+          <p v-if="loading" class="server-chat__notice" role="status">{{ $t('chat.loading') }}</p>
+          <p v-else-if="!state?.supported" class="server-chat__notice">{{ $t('chat.unsupported') }}</p>
+          <p v-else-if="!state.ready" class="server-chat__notice">{{ $t('chat.stopped') }}</p>
+          <p v-if="state?.captureErrors" class="server-chat__error" role="alert">{{ $t('chat.captureError') }}</p>
+          <p v-if="historyError" class="server-chat__error" role="alert">{{ historyError }}</p>
+          <p v-if="sendError" class="server-chat__error" role="alert">{{ sendError }}</p>
+        </template>
+      </div>
+      <div v-if="canRead && !error" ref="transcript" class="server-chat__transcript" role="log" :aria-label="$t('chat.messages')"
         aria-live="polite" aria-relevant="additions" tabindex="0" @scroll="trackScroll">
         <AppButton v-if="state?.nextBefore" variant="ghost" :loading="olderBusy" @click="loadOlder">
           {{ $t('chat.older') }}
         </AppButton>
         <p v-if="state?.supported && !state.items.length" class="server-chat__empty">{{ $t('chat.empty') }}</p>
-        <ol v-if="state?.items.length" class="server-chat__messages">
-          <li v-for="item in state.items" :key="item.id" class="server-chat__message">
-            <div class="server-chat__byline">
-              <strong>{{ item.kind === 'fabricator' ? `Fabricator · ${item.sender}` : item.sender }}</strong>
-              <time :datetime="item.ts">{{ time(item.ts) }}</time>
-              <span v-if="item.status">{{ $t(item.status === 'submitted' ? 'chat.submitted'
-                : item.status === 'failed' ? 'chat.failed' : 'chat.unknownOutcome') }}</span>
+        <ol v-if="conversation.length" class="server-chat__messages">
+          <li v-for="item in conversation" :key="item.id" class="server-chat__message"
+            :class="{ 'is-continued': item.continued, 'is-own': item.own }">
+            <div class="server-chat__avatar">
+              <template v-if="!item.continued">
+                <PlayerAvatar v-if="item.kind === 'player'" :name="item.sender" :size="32"
+                  :offline-mode="! /^[A-Za-z0-9_]{1,16}$/.test(item.sender)" />
+                <span v-else class="server-chat__portal-avatar" aria-hidden="true">F</span>
+              </template>
             </div>
-            <p>{{ item.message }}</p>
+            <div class="server-chat__message-body">
+              <strong class="server-chat__author" :class="{ 'server-chat__sr-only': item.continued }">
+                {{ item.kind === 'fabricator' ? `Fabricator · ${item.sender}` : item.sender }}
+              </strong>
+              <p class="server-chat__bubble">{{ item.message }}</p>
+              <div class="server-chat__meta">
+                <time :datetime="item.ts">{{ time(item.ts) }}</time>
+                <span v-if="item.status">{{ $t(item.status === 'submitted' ? 'chat.submitted'
+                  : item.status === 'failed' ? 'chat.failed' : 'chat.unknownOutcome') }}</span>
+              </div>
+            </div>
           </li>
         </ol>
       </div>
-      <AppButton v-if="!follow" variant="ghost" class="server-chat__latest" @click="follow = true; scrollToLatest()">
+      <AppButton v-if="canRead && !error && !follow" variant="ghost" class="server-chat__latest"
+        @click="follow = true; scrollToLatest()">
         {{ $t('chat.latest') }}
       </AppButton>
-    </template>
+    </div>
     <form v-if="canRead && canSend" class="server-chat__composer" @submit.prevent="send">
-      <label for="server-chat-message">{{ $t('chat.message') }}</label>
+      <label for="server-chat-message" class="server-chat__sr-only">{{ $t('chat.message') }}</label>
       <div class="server-chat__input-row">
         <input id="server-chat-message" v-model="message" type="text" maxlength="512" autocomplete="off"
           :disabled="!allowed" :placeholder="$t('chat.placeholder')" aria-describedby="server-chat-identity" />
-        <AppButton type="submit" :loading="sending" :disabled="!allowed || !message.trim()">{{ $t('chat.send') }}</AppButton>
+        <button type="submit" class="server-chat__send" :disabled="!allowed || !message.trim()"
+          :aria-label="$t('chat.send')" :aria-busy="sending">
+          <span v-if="sending" class="server-chat__send-spinner" aria-hidden="true"></span>
+          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path d="m21 3-7 18-4-7-7-4 18-7Z" stroke-linejoin="round" />
+            <path d="m10 14 11-11" stroke-linecap="round" />
+          </svg>
+        </button>
       </div>
-      <p id="server-chat-identity">{{ state?.sender ? $t('chat.identity', { name: state.sender }) : $t('chat.signIn') }}</p>
-      <p v-if="sendError" class="server-chat__error" role="alert">{{ sendError }}</p>
+      <p id="server-chat-identity" class="server-chat__identity">
+        {{ state?.sender ? $t('chat.portalIdentity', { name: state.sender }) : $t('chat.portal') }}
+      </p>
     </form>
-    <p v-else-if="canRead" class="server-chat__notice">{{ $t('chat.readOnly') }}</p>
-    <p class="server-chat__privacy">{{ $t('chat.privacy') }}</p>
+    <p v-else-if="canRead" class="server-chat__read-only">{{ $t('chat.readOnly') }}</p>
   </section>
 </template>
 
 <style scoped>
-.server-chat { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
-.server-chat__header { display: flex; justify-content: space-between; align-items: start; gap: var(--space-4); }
-.server-chat h2 { color: var(--text-primary); font-size: var(--text-lg); margin-bottom: var(--space-2); }
-.server-chat__header p, .server-chat__notice, .server-chat__privacy,
-.server-chat__composer > p { font-size: var(--text-sm); color: var(--text-secondary); line-height: var(--leading-normal); }
-.server-chat__state { font-size: var(--text-sm); color: var(--text-secondary); white-space: nowrap; }
-.server-chat__transcript { overflow-y: auto; min-height: 240px; max-height: 52vh; padding: var(--space-4);
+.server-chat { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0;
   background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-md); }
-.server-chat__messages { list-style: none; display: flex; flex-direction: column; gap: var(--space-5); }
-.server-chat__transcript > :deep(.app-btn) { margin-bottom: var(--space-4); }
-.server-chat__byline { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-3);
-  font-size: var(--text-sm); color: var(--text-secondary); }
-.server-chat__byline strong { color: var(--text-primary); overflow-wrap: anywhere; }
-.server-chat__message p { margin-top: var(--space-1); color: var(--text-primary); line-height: var(--leading-normal); overflow-wrap: anywhere; }
-.server-chat__empty { color: var(--text-secondary); line-height: var(--leading-normal); max-width: 65ch; }
-.server-chat__composer { display: flex; flex-direction: column; gap: var(--space-2); }
-.server-chat__composer label { font-size: var(--text-sm); color: var(--text-primary); }
-.server-chat__input-row { display: flex; gap: var(--space-2); }
-.server-chat__input-row input { flex: 1; min-width: 0; min-height: 40px; }
+.server-chat__header { flex-shrink: 0; display: flex; justify-content: space-between; align-items: center;
+  gap: var(--space-4); padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--border-color); }
+.server-chat h2 { color: var(--text-primary); font-size: var(--text-md); }
+.server-chat__state { display: flex; align-items: center; gap: var(--space-2);
+  font-size: var(--text-sm); color: var(--text-secondary); white-space: nowrap; }
+.server-chat__status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); }
+.server-chat__state.is-ready .server-chat__status-dot { background: var(--success); }
+.server-chat__viewport { position: relative; flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.server-chat__notices { flex-shrink: 0; padding-inline: var(--space-5); }
+.server-chat__notices p { margin-top: var(--space-3); font-size: var(--text-sm); line-height: var(--leading-normal); }
+.server-chat__notice { color: var(--text-secondary); }
+.server-chat__transcript { flex: 1; display: flex; flex-direction: column; min-height: 0;
+  overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; overflow-anchor: none;
+  padding: var(--space-5) var(--space-5) var(--space-8); }
+.server-chat__messages { flex-shrink: 0; margin-top: auto; list-style: none; display: flex;
+  flex-direction: column; gap: var(--space-1); }
+.server-chat__transcript > :deep(.app-btn) { flex-shrink: 0; align-self: center; margin-bottom: var(--space-4); }
+.server-chat__message { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: var(--space-3); }
+.server-chat__message + .server-chat__message:not(.is-continued) { margin-top: var(--space-4); }
+.server-chat__avatar { width: 32px; min-height: 32px; }
+.server-chat__avatar :deep(img) { image-rendering: pixelated; }
+.server-chat__portal-avatar { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px;
+  border-radius: var(--radius-sm); background: var(--bg-tertiary); color: var(--primary); font-size: var(--text-sm); font-weight: 700; }
+.server-chat__message-body { min-width: 0; max-width: min(85%, 65ch); justify-self: start;
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); }
+.server-chat__author { color: var(--text-secondary); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.server-chat__bubble { padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
+  background: var(--bg-tertiary); color: var(--text-primary); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.server-chat__meta { display: flex; flex-wrap: wrap; gap: var(--space-2); color: var(--text-muted); font-size: var(--text-xs); }
+.server-chat__message.is-own { grid-template-columns: minmax(0, 1fr) 32px; }
+.server-chat__message.is-own .server-chat__avatar { grid-column: 2; grid-row: 1; }
+.server-chat__message.is-own .server-chat__message-body { grid-column: 1; grid-row: 1; justify-self: end; align-items: flex-end; }
+.server-chat__message.is-own .server-chat__bubble { background: color-mix(in srgb, var(--primary) 12%, var(--bg-tertiary)); }
+.server-chat__empty { margin: auto; color: var(--text-muted); font-size: var(--text-sm); }
+.server-chat__composer { flex-shrink: 0; padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--border-color); }
+.server-chat__input-row { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1);
+  background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: var(--radius-md); }
+.server-chat__input-row input { flex: 1; min-width: 0; height: 44px; padding-inline: var(--space-3);
+  border: 0; border-radius: 0; background: transparent; }
 .server-chat__input-row input::placeholder { color: var(--text-muted); }
-.server-chat__input-row :deep(.app-btn) { min-height: 40px; }
-.server-chat__error { color: var(--danger) !important; font-size: var(--text-sm); }
-.server-chat__latest { align-self: center; }
-.server-chat__transcript:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.server-chat__input-row input:focus { outline: none; border-color: transparent; }
+.server-chat__input-row:focus-within { outline: 2px solid var(--primary); outline-offset: 2px; }
+.server-chat__send { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 44px; height: 44px;
+  border: 0; border-radius: var(--radius-sm); background: var(--primary); color: var(--text-on-primary); cursor: pointer; }
+.server-chat__send:hover:not(:disabled) { background: var(--primary-dark); }
+.server-chat__send:disabled { opacity: 0.5; cursor: not-allowed; }
+.server-chat__send svg { width: 20px; height: 20px; }
+.server-chat__send-spinner { width: 20px; height: 20px; border: 2px solid currentColor;
+  border-right-color: transparent; border-radius: 50%; animation: chat-spin 0.8s linear infinite; }
+.server-chat__identity { margin-top: var(--space-2); color: var(--text-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.server-chat__read-only { flex-shrink: 0; padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--border-color); color: var(--text-muted); font-size: var(--text-sm); }
+.server-chat__error { color: var(--danger); }
+.server-chat__latest { position: absolute; bottom: var(--space-2); left: 50%; transform: translateX(-50%);
+  box-shadow: var(--shadow-md); }
+.server-chat__transcript:focus-visible, .server-chat__send:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.server-chat__sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+@keyframes chat-spin { to { transform: rotate(1turn); } }
 @media (max-width: 600px) {
-  .server-chat__header { flex-direction: column; gap: var(--space-2); }
+  .server-chat__header { padding: var(--space-3); }
   .server-chat__transcript { padding: var(--space-3); }
+  .server-chat__composer { padding: var(--space-3); }
+  .server-chat__notices { padding-inline: var(--space-3); }
+  .server-chat__message-body { max-width: 100%; }
   .server-chat__input-row input { font-size: var(--text-md); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .server-chat__send-spinner { animation: none; }
 }
 </style>
