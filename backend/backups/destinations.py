@@ -173,7 +173,7 @@ def _owned(snapshot):
     return destination, key
 
 
-def publish(path, snapshot, cfg, job_id):
+def publish(path, snapshot, cfg, job_id, *, recovery=None):
     """Upload, read back to verify SHA-256, then publish recovery metadata.
 
     Unique keys prevent overwrites. A crash before local indexing leaves an
@@ -195,7 +195,7 @@ def publish(path, snapshot, cfg, job_id):
         client.upload_file(
             str(path), destination["bucket"], key,
             ExtraArgs={"Metadata": {
-                "sha256": snapshot["sha256"], "fabricator-format": "1",
+                "sha256": snapshot["sha256"], "fabricator-format": "2" if recovery else "1",
                 "snapshot-id": snapshot["id"], "server-id": snapshot["serverId"],
                 "config-id": snapshot.get("configId") or "",
                 "created-at": snapshot["createdAt"],
@@ -212,12 +212,15 @@ def publish(path, snapshot, cfg, job_id):
             raise DestinationError("S3 upload verification failed; retention was not run")
         _verify_stream(client, destination, key, snapshot, job_id)
         metadata = {
-            "format": "fabricator-backup", "version": 1,
+            "format": "fabricator-backup", "version": 2 if recovery else 1,
             "snapshot": {**snapshot, "filePath": None},
             "config": {"id": cfg.get("id"), "name": cfg.get("name")},
             "archiveFormat": "tar (plain or hybrid data.tar.gz/worlds.tar)",
         }
-        progress.update(job_id, phase="publishing_metadata")
+        if recovery:
+            metadata["recovery"] = recovery
+        if job_id:
+            progress.update(job_id, phase="publishing_metadata")
         client.put_object(
             Bucket=destination["bucket"], Key=key + ".fabricator.json",
             Body=json.dumps(metadata).encode("utf-8"), ContentType="application/json",
@@ -248,7 +251,7 @@ def _verify_stream(client, destination, key, snapshot, job_id, target=None):
 
 
 @contextmanager
-def materialise(snapshot, job_id=None):
+def materialise(snapshot, job_id=None, *, directory=None, import_operation=False):
     """Yield a verified local archive; always clean remote temporary files."""
     if not is_remote(snapshot):
         path = Path(snapshot.get("filePath") or "")
@@ -257,9 +260,11 @@ def materialise(snapshot, job_id=None):
         yield path
         return
     destination, key = _owned(snapshot)
-    with tempfile.TemporaryDirectory(prefix="fabricator-s3-download-") as directory:
-        path = Path(directory) / "archive.tar"
-        with _client(destination, snapshot["serverId"]) as client, path.open("wb") as target:
+    if import_operation and _profile(destination, None).get("allowImport") is not True:
+        raise DestinationError("S3 profile must explicitly enable allowImport for instance recovery")
+    with tempfile.TemporaryDirectory(prefix="fabricator-s3-download-", dir=directory) as temporary:
+        path = Path(temporary) / "archive.tar"
+        with _client(destination, None if import_operation else snapshot["serverId"]) as client, path.open("wb") as target:
             _verify_stream(client, destination, key, snapshot, job_id, target)
         yield path
 

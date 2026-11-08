@@ -88,6 +88,11 @@ def record_response(response):
         }.get(operation)
     elif group == "diagnostics":
         action = {"sampling": "diagnostics.configure", "capture": "diagnostics.capture"}.get(operation)
+    elif group == "s3_recovery":
+        if operation == "enqueue":
+            action = "server.import.inspect" if path.endswith("/previews") else "server.import.s3"
+        elif operation == "preview" and request.method == "DELETE":
+            action = "server.import.preview.delete"
     # Instance creation returns the assigned ID; never copy any other fields.
     if not sid and group == "server" and operation in {"create_server", "import_server"} and response.is_json:
         data = response.get_json()

@@ -6,7 +6,7 @@
 
 - **OIDC login** — authentication through an OpenID Connect provider.
 - **DNS management** — manage DNS records for Minecraft servers.
-- **S3 backups** — [S3-compatible destinations](deploy/backups/README.md) for saved backup configurations.
+- **S3 backups & instance recovery** — [S3-compatible destinations and independent stopped-instance recovery](deploy/backups/README.md) for migration or host repaving, without the source backup index.
 - **Alerts & activity history** — [actor-aware change history and durable generic/Discord notifications](deploy/notifications/README.md) for unexpected exits, failed jobs/backups and disk pressure, with permission-scoped views and protected webhook destinations.
 - **Client modpack exports** — [persistent client-only selections, private `.mrpack` downloads and opt-in expiring share links](deploy/client-packs/README.md), combined with exact installed server mod versions.
 - **Shareable world downloads** — [immutable stopped-world archives, private downloads and opt-in expiring/revocable anonymous links](deploy/world-downloads/README.md), preserving complete supported dimension groups without full-server backups.

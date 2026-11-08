@@ -14,6 +14,7 @@ from backend.modrinth.client_pack_routes import client_pack_bp, client_pack_shar
 from backend.modrinth.update_routes import updates_bp
 from backend.system.routes import system_bp
 from backend.backups.routes import backups_bp
+from backend.backups.recovery_routes import recovery_bp
 from backend.server.players.routes import players_bp
 from backend.playit.routes import playit_bp
 from backend.integrations.routes import integrations_bp
@@ -67,6 +68,7 @@ def create_app() -> Flask:
     app.register_blueprint(client_pack_share_bp)
     app.register_blueprint(system_bp)
     app.register_blueprint(backups_bp)
+    app.register_blueprint(recovery_bp)
     app.register_blueprint(players_bp)
     app.register_blueprint(playit_bp)
     app.register_blueprint(integrations_bp)
@@ -95,6 +97,8 @@ def create_app() -> Flask:
     recover_updates()
     from backend.server.world_exports import recover as recover_world_exports
     recover_world_exports()
+    from backend.backups.recovery import recover as recover_s3
+    recover_s3()
     init_events(app)
 
     # Same idea for abandoned world uploads (up to 10 GiB each). They are

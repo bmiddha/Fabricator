@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import ToastContainer from './components/common/ToastContainer.vue'
 import ServerCreateModal from './components/modals/ServerCreateModal.vue'
 import ImportServerModal from './components/modals/ImportServerModal.vue'
+import S3RecoveryModal from './components/modals/S3RecoveryModal.vue'
 import { useToast } from './composables/useToast'
 import { useAuthStore } from './stores/auth'
 import { t } from './i18n'
@@ -19,6 +20,7 @@ const auth = useAuthStore()
 const showCreateModal = ref(false)
 provide('showCreateModal', showCreateModal)
 const showImportModal = ref(false)
+const showS3Recovery = ref(false)
 
 const openImport = () => {
   showCreateModal.value = false
@@ -69,6 +71,13 @@ const handleCreateServer = (createdServer) => {
       :show="showImportModal"
       @close="showImportModal = false"
       @imported="handleImportedServer"
+      @s3="showImportModal = false; showS3Recovery = true"
+    />
+    <S3RecoveryModal
+      v-if="auth.can('servers.import') && auth.can('servers.create')"
+      :show="showS3Recovery"
+      @close="showS3Recovery = false"
+      @recovered="handleImportedServer"
     />
   </template>
   <ToastContainer />

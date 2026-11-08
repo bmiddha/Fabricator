@@ -133,14 +133,26 @@ Archives are stored at:
 <prefix>/fabricator/<server-id>/<snapshot-id>/<archive-name>.tar.fabricator.json
 ```
 
-The sidecar has `format: "fabricator-backup"`, `version: 1`, a complete `snapshot`
+The sidecar has `format: "fabricator-backup"`, `version: 2`, a complete `snapshot`
 record (including provenance, location, size and SHA-256), a non-secret config
 ID/name, and the archive layout. The archive's S3 user metadata also has its
 SHA-256, format version, snapshot ID, config ID, creation time and server ID.
-No credentials are embedded. Sidecars are recovery aids, not signatures: protect
-their write permissions just like the archives.
+New sidecars additionally contain `recovery: {format: "fabricator-instance",
+version: 1, platform, server}` with game/loader/build, portable launch specification,
+heap settings and supported JVM tuning. Absolute Java paths, custom commands,
+credentials, DNS/tunnel/map registrations and installation grants are not
+serialized. An unsupported/custom source launch instead sets
+`requiresOperatorMetadata: true`: the backup remains useful, but recovery needs
+explicit operator inputs. Version-1 sidecars remain supported as legacy backups.
 
-If the local index is lost:
+No credentials are embedded **in this generated recovery manifest**. Server
+archives can contain RCON, mod/plugin credentials and player/admin data.
+Sidecars are recovery aids, not signatures: protect their write permissions
+just like the archives.
+
+For an existing registered server whose local index is lost, the following
+manual index-repair path remains available. For a fresh installation or new
+instance, use the independent recovery workflow below instead:
 
 1. Use your provider's CLI to download the sidecar and its archive. Verify the
    archive against `snapshot.sha256` and `snapshot.sizeBytes`.
@@ -156,8 +168,144 @@ If the local index is lost:
    same target directory. Do not unpack over a running server.
 
 If no sidecar was published, the exact key and archive user metadata still
-identify the orphan and checksum for offline recovery. There is intentionally
-no automatic bucket-wide import or orphan deletion.
+identify the orphan and checksum for offline recovery. An orphan with intact Fabricator S3 user metadata is also discoverable in the
+workflow below, but requires explicit legacy launch inputs. Objects without
+Fabricator ownership/format/checksum metadata are not supported import sources.
+There is no automatic orphan deletion.
+
+## Create an instance from S3: migration and repaving
+
+This workflow creates an **independent, stopped Minecraft instance** on a fresh,
+different or repaved Fabricator installation. It needs neither the source
+`servers.json` nor source backup JSON. It never replaces an existing instance,
+starts archived code, installs Java, deletes source objects, or clones source
+backup schedules.
+
+On the **target backend**, provision your own credentials and enable a separate
+operator-approved recovery alias, for example:
+
+```sh
+FABRICATOR_BACKUP_S3_PROFILES='{"recovery":{"buckets":["my-backups"],"region":"us-east-1","allowImport":true}}'
+```
+
+For MinIO/R2, also set this target alias's `endpointUrl`, `addressingStyle` and
+optional `awsProfile` as described above. The original installation's alias
+and credentials are not needed. Recovery reads use the supplied target alias;
+the original source server/snapshot identity is retained only as provenance.
+Use `s3:ListBucket` limited to the original `<prefix>/fabricator/` namespace,
+plus `s3:GetObject` for archives and sidecars. Recovery itself needs no PUT,
+DELETE or multipart-write access.
+
+**`allowImport` is an explicit trust boundary.** It permits users with both
+global `servers.import` and `servers.create` capabilities to discover/read
+Fabricator objects in the alias's allowed buckets and IAM namespaces.
+`serverIds` restrictions still protect normal backup operations, but do not
+apply to these independent recovery reads: the source ID may not exist locally.
+Do not enable this flag on a broadly privileged shared alias unless that access
+is intended. All recovery routes refuse MCP bearer tokens and managed mode.
+
+1. On the target, open **Create server > Import existing server >
+   Recover from an S3 backup**. Enter the target backend alias, original bucket
+   and original prefix. Credentials are never entered into the browser.
+2. Discover supported Fabricator snapshots. Listing is paginated and does not
+   turn arbitrary third-party archives into import candidates. Select a snapshot
+   and a unique, portable new instance name.
+3. New portable manifests supply the original loader/game/build and launch data.
+   A legacy sidecar, unpublished/lost sidecar, custom launch or platform-specific
+   argument-file migration needs explicit original metadata. Supply the actual
+   released game version, loader/build, relative jar/argument-file target and
+   heap settings. These values cannot be invented from data an old backup never
+   stored. Unsupported host paths, nested argument-file includes, commands and
+   unsafe flags require manual offline migration.
+4. **Download & inspect snapshot** verifies the full archive SHA-256, preflights
+   both plain/hybrid tar layers, checks sizes and free space, extracts into private
+   staging, validates launch/game/world compatibility, and identifies configuration
+   files that may contain secrets. Preview shows provenance, bytes, worlds, Java
+   requirement and reset/privacy risks. Secret values are never displayed.
+5. Review the risks, explicitly accept any retained/uninspected configuration
+   secrets, and type the new instance name. **Create stopped instance** verifies
+   the inspected file hashes again, copies independent bytes, assigns a new ID
+   and fresh available game/query/RCON ports, and transactionally registers it.
+   Check Java and mod/plugin prerequisites before manually starting.
+
+Supported recovery uses Java game loaders supported by instance transfers
+(vanilla, Fabric, Quilt, Forge, NeoForge and Paper-family loaders), released
+Minecraft versions, normal jar or portable argument-file launches, and supported
+Java nested/Bukkit split world layouts. Custom world containers, additional
+plugin-managed root worlds, proxies, worlds lacking supported NBT version
+metadata and snapshot-version worlds need manual
+migration. Native mods and cross-platform dependencies may need operator work;
+argument-file platform changes require explicit target launch input. Launch jar
+inspection is bounded to 512 MiB, 100,000 ZIP entries and 64 KiB game-version
+metadata; ZIP64 launch jars require manual migration.
+
+Whole archived world/mod/plugin/config/loader files are retained, including world
+playerdata, statistics, advancements and mod capabilities. Known source
+administration (`ops`, whitelist/bans/user caches), installation auth/environment
+files, backup/log/tunnel controls, map capability/nonces and proxy secrets are
+removed or reset. Known RCON/query/JMX/management/proxy listeners are disabled;
+the game binds loopback with online mode enabled. BlueMap web serving and resource
+download consent are disabled; configure maps afresh on the target. Bukkit UUIDs
+are regenerated. **Other plugin permissions, secrets, web listeners, external
+databases and world identities are not universally scrubbed.** Review/rotate
+those yourself before starting. Text detection is bounded to 1 MiB per file and
+16 MiB total, with large/non-text/uninspected content explicitly disclosed.
+
+Fabricator accounts, signing keys, OIDC/MCP grants, DNS registrations, global
+tunnels, diagnostics, notification configuration, schedules and Java paths are
+not transplanted. An administrator must grant access to the **new** instance ID
+when global roles do not already cover it. Reconfigure target networking and
+backups explicitly; existing instances and provider objects are untouched.
+Exclusions or missing files in the source backup cannot be recovered by this
+workflow. Create full-instance backups and test recovery before depending on them.
+
+### Temporary disk and interrupted jobs
+
+Default archive and expanded-byte limit: **100 GiB**, with **200,000 entries**
+including implicit parent directories, at most 200,000 exposed tar headers,
+**1 MiB per archive metadata record / control configuration**, **256 MiB total
+archive header/metadata reads**, and bounded portable relative paths.
+`FABRICATOR_MAX_S3_IMPORT_BYTES` overrides
+the byte limit; the existing transfer byte limit also applies to extracted
+trees/copying. Space checks keep a 64 MiB reserve. Allow the archive plus an
+extracted tree during inspection, then **two extracted copies** during
+confirmation. This is temporary staging, not a permanent mirror.
+
+Inspected previews live in private `<SERVER_ROOT>/.s3-preview-<opaque-id>`
+directories for one hour and survive a panel restart. Preview receipts and jobs
+are owner-bound; reopening the dialog resumes a saved preview and requires
+fresh confirmation. Discarding a preview deletes only its local staging, never
+S3 objects. Expired ready previews are swept on the next recovery submission
+and startup; incomplete preview staging is cleaned at startup. Ordinary failed
+inspection cleans its temporary files. At most two recovery workers run at once.
+
+Imports reuse the durable `.fork-srv_<id>` registration journal. An interrupted,
+uncommitted import rolls back before autostart; a committed import is preserved
+and its journal cleaned. Starts remain blocked while a registration journal is
+present. Copy/registration failure retains a valid inspected preview for retry.
+If publication completed but cleanup failed, the job reports the registered
+instance and requires panel restart instead of blindly retrying creation.
+After losing job contact or restarting, check the instance list first; lost
+in-memory job progress is not proof that creation failed. Unsafe/malformed
+filesystem journals fail closed and require operator review rather than
+guessing which data to remove.
+
+### What to retain outside a host before repaving
+
+Keep the **bucket, original prefix, provider endpoint/region**, the archive and
+its sidecar, independent target access credentials/workload-identity setup, and
+any required encryption/KMS/customer-managed keys and decrypt permissions.
+Provider-controlled encryption keys cannot be recreated from a snapshot.
+Retain notes for unsupported custom launch flags, native dependencies and
+external databases. Prefer a separate read-only recovery credential and protect
+it off the machine being repaved.
+
+This recovers **Minecraft instances**, not the whole Fabricator administration
+installation. Preserve or redeploy installation authentication/OIDC, MCP tokens,
+DNS owner inventory/provider configuration, tunnel ownership, notification
+destinations and Java/operator configuration separately. Do not put
+installation-wide auth secrets into a server archive as a substitute for that
+separate recovery plan.
 
 ## Verification and limitations
 
@@ -165,12 +313,12 @@ Run the S3 tests against the isolated in-process Moto S3 emulator:
 
 ```sh
 pip install -r requirements.txt -r tests/requirements-s3.txt
-python -m pytest -q tests/test_backups_s3.py
+python -m pytest -q tests/test_backups_s3.py tests/test_s3_recovery.py
 ```
 
 No real credentials or buckets are needed. AWS S3, MinIO and R2 are protocol
 targets, not a claim of live-provider certification. Providers must support
-standard PUT/GET/HEAD/DELETE, multipart upload/abort and user metadata. Unsupported
+standard PUT/GET/HEAD/DELETE, multipart upload/abort, ListObjectsV2 and user metadata. Unsupported
 provider behavior fails the operation rather than claiming success. No
-presigned browser URLs, remote-to-remote replication, automatic index rebuild,
+presigned browser URLs, remote-to-remote replication, automatic original-index rebuild,
 archive-tier recalls, KMS provisioning or remote safety-copy policy is provided.

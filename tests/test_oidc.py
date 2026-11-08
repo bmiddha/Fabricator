@@ -51,6 +51,42 @@ def sign_in(client, sub="alice"):
         state.update(authenticated=True, auth_method="oidc", issuer=ISSUER, sub=sub)
 
 
+@pytest.mark.parametrize("method,path", [
+    ("post", "/api/s3-recovery/discover"), ("post", "/api/s3-recovery/previews"),
+    ("post", "/api/s3-recovery/imports"), ("get", "/api/s3-recovery/previews/token"),
+    ("delete", "/api/s3-recovery/previews/token"), ("get", "/api/s3-recovery/jobs/job"),
+])
+@pytest.mark.parametrize("grants", [[], ["servers.import"], ["servers.create"]])
+def test_s3_recovery_requires_both_global_capabilities(oidc_app, monkeypatch, method, path, grants):
+    from backend.backups import recovery
+    spy = MagicMock(side_effect=AssertionError("No bucket/profile access or imported files"))
+    monkeypatch.setattr(recovery, "connection", spy)
+    user = permissions.Principal("recovery-user", ISSUER, (), frozenset(grants), {}, {})
+    oidc_app.extensions["oidc"].users[user.subject] = user
+    client = oidc_app.test_client()
+    sign_in(client, user.subject)
+    assert getattr(client, method)(path, json={}).status_code == 403
+    spy.assert_not_called()
+
+
+def test_s3_recovery_job_owner_and_live_permissions(oidc_app):
+    from backend.backups import progress
+    user = permissions.Principal("recovery-user", ISSUER, (),
+                                frozenset({"servers.import", "servers.create"}), {}, {})
+    oidc_app.extensions["oidc"].users[user.subject] = user
+    progress.update("recovery-owner-job", phase="done", kind="s3-preview", owner=user.owner, audit=False)
+    client = oidc_app.test_client()
+    sign_in(client, user.subject)
+    assert client.get("/api/s3-recovery/jobs/recovery-owner-job").status_code == 200
+    assert "owner" not in client.get("/api/s3-recovery/jobs/recovery-owner-job").get_json()
+    sign_in(client, "root")
+    assert client.get("/api/s3-recovery/jobs/recovery-owner-job").status_code == 404
+    oidc_app.extensions["oidc"].users[user.subject] = permissions.Principal(
+        user.subject, ISSUER, (), frozenset({"servers.import"}), {}, {})
+    sign_in(client, user.subject)
+    assert client.get("/api/s3-recovery/jobs/recovery-owner-job").status_code == 403
+
+
 def test_activity_and_notification_permissions_are_separate(oidc_app, monkeypatch):
     from backend.events import store, transport
     from backend.server import storage

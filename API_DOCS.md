@@ -1315,6 +1315,70 @@ again is listed again.
 Backup work runs asynchronously: the endpoints return a `job_id` you poll via
 `GET /api/backup-jobs/<job_id>`.
 
+### Independent S3 instance recovery
+
+Session-authenticated, experimental and **unavailable to all MCP API tokens or
+managed mode**. Every endpoint requires both global `servers.import` and
+`servers.create`. Target profiles must explicitly set `allowImport: true`;
+bucket/IAM grants apply, but normal source `serverIds` restrictions do not apply
+to recovery reads. No source server registry or backup index is needed.
+See [operator setup, migration and repaving](deploy/backups/README.md).
+
+- `POST /api/s3-recovery/discover`: body `{destination, cursor?}`. `destination`
+  uses the existing S3 fields (`type`, backend alias `profile`, `bucket`,
+  original `prefix`, optional `region`/approved `endpointUrl`), never credentials.
+  Returns `{snapshots, cursor, rejectedObjects}` for one bounded S3 listing page.
+  Entries expose `objectKey`, source/snapshot IDs, creation time, archive bytes,
+  loader/version where available and `legacy`. Only ownership/format/checksum
+  marked Fabricator objects are candidates; unsupported metadata is refused.
+- `POST /api/s3-recovery/previews`: body `{destination, objectKey, name, legacy?}`.
+  Returns `202 {jobId}` for download, full SHA-256 verification, strict archive
+  inspection/extraction, launch/world compatibility checks, administrative
+  resets and bounded secret detection. Poll the job; an accepted request is not
+  a successful inspection.
+- `GET /api/s3-recovery/jobs/<job_id>`: owner-bound progress. Terminal `done`
+  carries `result` (inspection preview or `{serverId,name,status:"stopped"}`).
+  `failed` carries a safe actionable `error`; `published: true` and a result
+  identify an already registered instance when later cleanup failed. Job phases
+  include `queued`, `downloading`, `inspecting`, `extracting`, `copying`,
+  `verifying`, `registering`, `cleaning_up`, `done` and `failed`.
+  Transfer/copy byte counters use `total_bytes`, `transferred_bytes` and
+  `copied_bytes`. In-memory progress may be absent after restart.
+- `GET /api/s3-recovery/previews/<token>`: resume the same owner's ready preview
+  for up to one hour, including after restart. Contains provenance, SHA-256,
+  archive/extracted bytes, game/loader/build, worlds, Java requirement,
+  reset counts, warnings, and relative suspected-secret file names/counts,
+  **not values**. No host Java is downloaded or changed.
+- `POST /api/s3-recovery/imports`: body
+  `{previewId, confirmName, acknowledgeRisks:true, retainEmbeddedSecrets?}`.
+  Confirm the exact inspected name. Explicit `retainEmbeddedSecrets:true` is
+  required for suspected or uninspected configuration secrets. Returns
+  `202 {jobId}`; rechecks inspected hashes, checks space for an independent
+  copy, assigns a fresh ID/available ports, then transactionally registers a
+  stopped instance. Existing instances/S3 objects are never overwritten.
+- `DELETE /api/s3-recovery/previews/<token>`: discard only that owner's local
+  inspected staging, not source S3 objects.
+
+For legacy/missing/nonportable manifests, `legacy` requires original `loader`,
+released Minecraft `version`, mod-loader `loaderVersion` where applicable,
+and `launch:{type:"jar",jar:"relative.jar"}` or
+`launch:{type:"args_file",args_file:"relative.txt"}`. It may include explicit
+`memory`, `memoryMin`, `memoryUnit` and portable `jvmArgs` tuning. Launch targets
+must exist in the archive; arbitrary commands, host paths, unsafe flags and
+missing world/loader files are not reconstructed from absent metadata.
+New S3 sidecar version 2 includes a credential-free, versioned portable instance
+manifest; version-1/no-sidecar Fabricator archives remain explicit legacy paths.
+
+Discovery/input errors return `400`; permission denial `403`; foreign,
+missing/expired previews or unavailable jobs `404`. Worker validation,
+corruption, space, collision and publication failures are reported through job
+state. After uncertain submission or restart, inspect saved state and the
+instance list before retrying; HTTP/network failure is not proof that a worker
+did not commit. Imported Fabricator grants, DNS/tunnels, map consent/nonces,
+autostart, installation auth secrets and absolute Java overrides are reset or
+not copied. Other mod/plugin secrets and listener behavior require operator
+review before manual start.
+
 ### Configs
 
 #### `GET /api/servers/<server_id>/backup-configs`

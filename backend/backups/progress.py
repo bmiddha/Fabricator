@@ -64,7 +64,8 @@ def update(job_id: str, /, **kwargs: Any) -> None:
         from backend.events.store import track_job
         entry = _store[job_id]
         action = {"restore": "worlds.restore", "world_import": "worlds.import",
-                  "fork": "server.fork", "world-copy": "worlds.copy"}.get(entry.get("kind"), "backups.create")
+                  "fork": "server.fork", "world-copy": "worlds.copy",
+                  "s3-preview": "server.import.inspect", "s3-import": "server.import.s3"}.get(entry.get("kind"), "backups.create")
         if entry.get("audit") is not False:
             track_job("backup:" + job_id, entry.get("server_id") or entry.get("sourceId"),
                       action, kwargs.get("phase"), ref=job_id,

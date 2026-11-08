@@ -351,7 +351,8 @@ def _execute_backup(
             if was_running:
                 _restart_server_safe(server, registry, job_id)
                 was_running = False
-            destinations.publish(archive_path, snapshot_data, cfg, job_id)
+            from backend.backups.portable import manifest
+            destinations.publish(archive_path, snapshot_data, cfg, job_id, recovery=manifest(server))
             duration = round(time.monotonic() - start_time, 3)
             snapshot_data["durationSeconds"] = duration
         snapshot = storage.record_snapshot(server_id, snapshot_data)

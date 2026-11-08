@@ -6,11 +6,13 @@ import FormField from '../ui/FormField.vue'
 import { inspectServerImport, importServer, getServerInstallProgress } from '../../api/servers'
 import { createProgressPoller, lostContactMessage, POLL_INTERVAL_MS } from '../../utils/pollProgress'
 import { t, te } from '../../i18n'
+import { useAuthStore } from '../../stores/auth'
 
 const props = defineProps({
   show: { type: Boolean, required: true }
 })
-const emit = defineEmits(['close', 'imported'])
+const emit = defineEmits(['close', 'imported', 's3'])
+const auth = useAuthStore()
 
 const LOADERS = ['fabric', 'quilt', 'neoforge', 'forge', 'paper', 'purpur', 'folia', 'pufferfish', 'vanilla']
 
@@ -145,6 +147,9 @@ function close() {
 
     <form v-else class="import-server" @submit.prevent="detected ? submit() : inspect()">
       <p class="import-server__muted">{{ $t('importServer.intro') }}</p>
+      <AppButton v-if="auth.can('servers.create') && !auth.managed" variant="ghost" size="md" @click="emit('s3')">
+        {{ $t('s3Recovery.open') }}
+      </AppButton>
 
       <FormField :label="$t('importServer.path')" :hint="$t('importServer.pathHint')">
         <template #default="{ id, describedBy }">

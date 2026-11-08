@@ -87,7 +87,8 @@ def test_remote_roundtrip_metadata_config_edit_and_restore(remote, compress, mod
     sidecar = json.loads(remote["s3"].get_object(
         Bucket="backup-tests", Key=snap["objectKey"] + ".fabricator.json",
     )["Body"].read())
-    assert sidecar["format"] == "fabricator-backup" and sidecar["version"] == 1
+    assert sidecar["format"] == "fabricator-backup" and sidecar["version"] == 2
+    assert sidecar["recovery"]["format"] == "fabricator-instance"
     assert sidecar["snapshot"]["sha256"] == snap["sha256"]
     assert sidecar["snapshot"]["serverId"] == "srv_s3"
     assert sidecar["snapshot"]["configId"] == remote["cfg"]["id"]
@@ -119,9 +120,9 @@ def test_server_restarts_before_upload(remote, monkeypatch):
     registry.get_status.return_value = {"status": "running"}
     real_publish = remote["destinations"].publish
 
-    def publish(*args):
+    def publish(*args, **kwargs):
         registry.start_server.assert_called_once()
-        return real_publish(*args)
+        return real_publish(*args, **kwargs)
     monkeypatch.setattr(remote["destinations"], "publish", publish)
     _backup(remote)
     registry.start_server.assert_called_once()
