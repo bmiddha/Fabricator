@@ -229,3 +229,13 @@ test('overview keeps metrics, logs, mod management, connection and console navig
   await settle()
   assert.equal(router.currentRoute.value.name, 'ServerConsole')
 })
+
+test('head motion is bounded to hover/focus and respects reduced-motion preferences', async () => {
+  const { descriptor } = parse(await readFile(new URL('./OnlinePlayerHeads.vue', import.meta.url), 'utf8'))
+  const css = descriptor.styles.map(style => style.content).join('\n')
+  assert.match(css, /transition:\s*transform 220ms/)
+  assert.match(css, /li:focus-within a\s*\{[^}]*translateY\(-6px\)/)
+  assert.match(css, /@media \(hover: hover\) and \(pointer: fine\)/)
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*transition: none;[\s\S]*transform: none;/)
+  assert.doesNotMatch(css, /transition:[^;]*(?:width|height|margin|padding)/)
+})

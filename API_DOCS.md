@@ -1213,6 +1213,8 @@ existing Players count card (not a separate section):
 current observed sessions are returned, with a compact `+N` link for the remainder.
 The existing online-player number stays visible; names and coverage information
 remain accessible through labels/tooltips without expanding the card into a list.
+Hovering or keyboard-focusing a head lifts it out of the stack with a slight
+alternating tilt; reduced-motion preferences keep the interaction static.
 UUIDs come only from observed login events, never cached name resolution.
 Stopped servers are `offline`, unsupported/untracked servers `unavailable`,
 and running snapshots `partial` because the tracker cannot reconstruct

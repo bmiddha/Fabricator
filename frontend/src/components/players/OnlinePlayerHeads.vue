@@ -94,13 +94,36 @@ a, button { color: var(--text-secondary); font-size: var(--text-sm); text-underl
 a:hover, button:hover { color: var(--primary); }
 a:focus-visible, button:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
 .online-heads__list { display: flex; list-style: none; padding: 0; margin: 0; }
-li { position: relative; border-radius: var(--radius-sm); background: var(--bg-secondary); }
+li { --head-tilt: -6deg; position: relative; border-radius: var(--radius-sm); background: var(--bg-secondary); }
+li:nth-child(even) { --head-tilt: 6deg; }
 li + li { margin-left: -16px; }
 li:hover, li:focus-within { z-index: 1; }
-li a { display: flex; border-radius: var(--radius-sm); text-decoration: none; }
+li a {
+  display: flex;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  transform-origin: 50% 80%;
+  transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 220ms ease-out;
+}
+li a :deep(.player-avatar__img) { image-rendering: pixelated; }
+li:focus-within a {
+  transform: translateY(-6px) rotate(var(--head-tilt)) scale(1.18);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.35);
+}
+@media (hover: hover) and (pointer: fine) {
+  li:hover a {
+    transform: translateY(-6px) rotate(var(--head-tilt)) scale(1.18);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.35);
+  }
+}
+li a:active { transform: translateY(-2px) rotate(0deg) scale(0.98); }
 .online-heads__remaining { display: inline-flex; align-items: center; justify-content: center; min-height: 24px; padding: 0 var(--space-1); font-size: var(--text-xs); text-decoration: none; }
 p { font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--text-muted); }
 .online-heads__note { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .online-heads__error { color: var(--danger); }
 button { background: transparent; border: 0; text-decoration: underline; cursor: pointer; margin-left: var(--space-2); }
+@media (prefers-reduced-motion: reduce) {
+  li a { transition: none; }
+  li:hover a, li:focus-within a, li a:active { transform: none; }
+}
 </style>
