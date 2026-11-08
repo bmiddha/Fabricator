@@ -4,6 +4,7 @@ import StatCard from '../../components/ui/StatCard.vue'
 import Panel from '../../components/ui/Panel.vue'
 import InstanceTransfers from '../../components/InstanceTransfers.vue'
 import PerformanceDiagnostics from '../../components/PerformanceDiagnostics.vue'
+import OnlinePlayerHeads from '../../components/players/OnlinePlayerHeads.vue'
 import { installedModDisplayName, installedModInitial } from '../../utils/installedModDisplay'
 import { useServerStore } from '../../stores/server'
 import { usePlayitStore } from '../../stores/playit'
@@ -188,6 +189,8 @@ onUnmounted(() => {
       <StatCard v-if="!isVelocity" :label="$t('overview.stats.tps')" :value="tpsDisplay" :accent="tpsAccent" />
       <StatCard v-if="hasContent" :label="$t('overview.stats.mods')" :value="store.installedMods.length" :accent="store.installedMods.length > 0 ? 'primary' : 'default'" />
     </section>
+
+    <OnlinePlayerHeads :server-id="store.currentServerId" :status="store.serverStatus.status" :loader="store.server?.loader || ''" />
 
     <!-- Forge/NeoForge run a subprocess installer that can take minutes, during
          which every panel below has nothing real to say. Lead with the install

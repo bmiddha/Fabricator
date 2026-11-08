@@ -17,6 +17,7 @@ from backend.backups.routes import backups_bp
 from backend.backups.recovery_routes import recovery_bp
 from backend.server.players.routes import players_bp
 from backend.server.players.directory_routes import directory_bp
+from backend.server.players.overview_routes import player_preview_bp
 from backend.playit.routes import playit_bp
 from backend.integrations.routes import integrations_bp
 from backend.schedules.routes import schedules_bp
@@ -72,6 +73,7 @@ def create_app() -> Flask:
     app.register_blueprint(recovery_bp)
     app.register_blueprint(players_bp)
     app.register_blueprint(directory_bp)
+    app.register_blueprint(player_preview_bp)
     app.register_blueprint(playit_bp)
     app.register_blueprint(integrations_bp)
     app.register_blueprint(schedules_bp)

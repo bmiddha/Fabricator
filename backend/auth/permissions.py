@@ -129,6 +129,7 @@ for method, suffix, permission in [
     ("POST", "/schedules/<schedule_id>/run", "schedules.run"),
     ("GET", "/players/state", "players.read"),
     ("GET", "/players/online", "players.read"),
+    ("GET", "/players/preview", "players.read"),
     ("POST", "/players/kick", "players.kick"),
     ("DELETE", "/players/known", "players.known.delete"),
 ]:

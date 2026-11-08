@@ -9,8 +9,12 @@ const props = defineProps({
 })
 
 const imgFailed = ref(false)
+const imgLoaded = ref(false)
 
-watch(() => [props.uuid, props.name], () => { imgFailed.value = false })
+watch(() => [props.uuid, props.name], () => {
+  imgFailed.value = false
+  imgLoaded.value = false
+})
 
 const initial = computed(() => {
   const n = (props.name || '').trim()
@@ -41,18 +45,22 @@ const src = computed(() =>
     <img
       v-if="showImg"
       class="player-avatar__img"
+      :class="{ 'player-avatar__img--loaded': imgLoaded }"
       :src="src"
       :width="size"
       :height="size"
       alt=""
+      referrerpolicy="no-referrer"
+      @load="imgLoaded = true"
       @error="imgFailed = true"
     />
-    <span v-else class="player-avatar__initial">{{ initial }}</span>
+    <span v-if="!showImg || !imgLoaded" class="player-avatar__initial">{{ initial }}</span>
   </span>
 </template>
 
 <style scoped>
 .player-avatar {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -63,9 +71,15 @@ const src = computed(() =>
   overflow: hidden;
 }
 .player-avatar__img {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   display: block;
+  visibility: hidden;
+}
+.player-avatar__img--loaded {
+  visibility: visible;
 }
 .player-avatar__initial {
   font-size: var(--text-xs);

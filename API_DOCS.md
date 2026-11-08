@@ -1206,6 +1206,19 @@ reinstall.
 
 ### Top-level Minecraft player directory
 
+`GET /api/servers/<server_id>/players/preview` requires `server.view` and
+`players.read` and supplies the overview's bounded head strip:
+`{players:[{id,namespace,uuid,name}],total,status,offlineMode}`. At most ten
+current observed sessions are returned, with a count/link for the remainder.
+UUIDs come only from observed login events, never cached name resolution.
+Stopped servers are `offline`, unsupported/untracked servers `unavailable`,
+and running snapshots `partial` because the tracker cannot reconstruct
+already-connected sessions after a panel restart. The overview polls every
+five seconds only while running and authorized, and clears old identities
+when server or permissions change. Verified public Minecraft UUIDs reuse the
+existing avatar provider without a page referrer or name lookup; offline,
+unverified and UUID-less identities use local initials.
+
 `GET /api/players` returns `{players, servers, total, offset, limit}`. Filters:
 `q` (name, historical name or UUID, up to 100 characters), `server` (server ID),
 `relation=all|joined|whitelisted|online`, `offset` (non-negative) and `limit`
