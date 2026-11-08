@@ -64,6 +64,7 @@ def read_chat(server_id, server):
             if supported else "Chat is unsupported for this loader/version. Use a supported Java release."
         ),
         "running": bool(manager and manager.is_running),
+        "offlineMode": server.get("onlineMode") is not True,
         "ready": ready,
         "sender": name,
         "canSend": bool(name and supported and ready and permissions.can("chat.send", server_id)),

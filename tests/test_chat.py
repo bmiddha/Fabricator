@@ -192,6 +192,40 @@ def test_stream_ingests_stdout_only_and_does_not_backfill(tmp_path):
     assert [item["message"] for item in journal.history("a")["items"]] == ["saved earlier", "hello"]
 
 
+def test_players_and_chat_share_stdout_without_spoofing_identity_or_importing_console(tmp_path):
+    from backend.server.players import files, observed, live
+    from datetime import datetime
+    uid = "12345678-1234-4234-8234-123456789abc"
+    manager = ServerManager(str(tmp_path), loader="vanilla", version="1.21")
+    manager.server_id = "a"
+    manager._process = SimpleNamespace(
+        stdout=io.StringIO(
+            f"[12:00:00] [User Authenticator #1/INFO]: UUID of player Alex is {uid}\n"
+            "[12:00:01] [Server thread/INFO]: Alex joined the game\n"
+            "[12:00:02] [Server thread/INFO]: <Alex> hello\n"
+            "[12:00:03] [Server thread/INFO]: <Alex> Ghost joined the game\n"
+            "[12:00:04] [Server thread/INFO]: private-console-canary\n"),
+        stderr=io.StringIO("[12:00:05] [Server thread/INFO]: <Root> private-stderr-canary\n"),
+    )
+    manager._start_log_streams()
+    manager._stdout_thread.join(timeout=2)
+    manager._stderr_thread.join(timeout=2)
+    registry = MagicMock()
+    registry.get_status.return_value = {"status": "running"}
+    registry.get_manager.return_value = manager
+    preview = live.preview_online(registry, {"id": "a", "onlineMode": True})
+    assert preview["players"][0]["id"] == f"minecraft:{uid}"
+    assert preview["total"] == 1
+    assert set(manager._players) == {"Alex"}
+    history = files.read_json_list(tmp_path, observed.HISTORY_FILE)
+    assert history[0]["uuid"] == uid and history[0]["name"] == "Alex"
+    assert datetime.fromisoformat(history[0]["lastJoined"]).tzinfo is not None
+    chat_items = journal.history("a")["items"]
+    assert [entry["message"] for entry in chat_items] == ["hello", "Ghost joined the game"]
+    assert all(entry["kind"] == "player" for entry in chat_items)
+    assert "private-console-canary" not in json.dumps(chat_items)
+
+
 @pytest.fixture
 def chat_app(app, tmp_servers_root, monkeypatch):
     from backend.auth.permissions import Principal

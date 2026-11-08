@@ -1,6 +1,7 @@
 """Bounded, UUID-attributed online preview and per-server authorization."""
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
+import pytest
 
 from flask import g
 
@@ -10,6 +11,15 @@ from backend.server.manager import OnlinePlayer, ServerManager
 from backend.server.players import files, live, overview_routes
 
 UID = "12345678-1234-4234-8234-123456789abc"
+
+
+@pytest.fixture(autouse=True)
+def live_modules():
+    global permissions, storage, OnlinePlayer, ServerManager, files, live, overview_routes
+    from backend.auth import permissions
+    from backend.server import storage
+    from backend.server.manager import OnlinePlayer, ServerManager
+    from backend.server.players import files, live, overview_routes
 
 
 def snapshot_registry(tmp_path, count=13):

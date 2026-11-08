@@ -8,6 +8,9 @@ test('route entry follows capabilities rather than role names', () => {
   assert.equal(canVisit(auth, 'ServerConsole', 'a'), true)
   assert.equal(canVisit(auth, 'ServerFiles', 'a'), false)
   assert.equal(canVisit(auth, 'ServerConsole', 'b'), false)
+  assert.equal(canVisit(auth, 'ServerChat', 'a'), false)
+  assert.equal(canVisit({ can: permission => permission === 'chat.send' }, 'ServerChat', 'a'), false)
+  assert.equal(canVisit({ can: permission => permission === 'chat.read' }, 'ServerChat', 'a'), true)
 })
 
 test('partial custom grants expose their action surface', () => {

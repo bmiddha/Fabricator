@@ -211,7 +211,7 @@ onUnmounted(() => { generation++; clearTimeout(timer); controller?.abort() })
             <div class="server-chat__avatar">
               <template v-if="!item.continued">
                 <PlayerAvatar v-if="item.kind === 'player'" :name="item.sender" :size="32"
-                  :offline-mode="! /^[A-Za-z0-9_]{1,16}$/.test(item.sender)" />
+                  :offline-mode="state?.offlineMode !== false || ! /^[A-Za-z0-9_]{1,16}$/.test(item.sender)" />
                 <span v-else class="server-chat__portal-avatar" aria-hidden="true">F</span>
               </template>
             </div>

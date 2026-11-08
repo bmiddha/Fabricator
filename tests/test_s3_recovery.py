@@ -479,3 +479,47 @@ def test_multipart_sized_archive_import_streams_independent_bytes(migration):
     result = m["recovery"].import_instance(confirm(preview))
     target = Path(m["storage"].get_server(result["serverId"])["installPath"])
     assert (target / "plugin-data.bin").read_bytes() == raw
+
+
+def test_http_recovery_jobs_keep_initiator_and_one_terminal_event(migration, monkeypatch):
+    from flask import g
+    from backend.auth.permissions import Principal
+    from backend.backups import progress
+    from backend.events import store
+    m = migration
+    workers = []
+    class DeferredThread:
+        def __init__(self, target, **kwargs):
+            self.target = target
+        def start(self):
+            workers.append(self.target)
+    monkeypatch.setattr(m["recovery"].threading, "Thread", DeferredThread)
+    user = Principal("migration-operator", "https://fixture.example", (),
+                     frozenset({"servers.import", "servers.create"}), {}, {})
+    @m["app"].before_request
+    def identity():
+        g.principal = user
+        g.audit_actor = {"kind": "oidc", "id": user.subject, "issuer": user.issuer}
+    client = m["app"].test_client()
+    response = client.post("/api/s3-recovery/previews", json=options(m))
+    assert response.status_code == 202
+    job = response.json["jobId"]
+    workers.pop()()
+    preview = progress.get(job)["result"]
+    response = client.post("/api/s3-recovery/imports", json=confirm(preview))
+    assert response.status_code == 202
+    job = response.json["jobId"]
+    workers.pop()()
+    state = progress.get(job)
+    assert state["phase"] == "done"
+    sid = state["result"]["serverId"]
+    rows = store.history(sid)["items"]
+    assert len(rows) == 1
+    assert rows[0]["action"] == "server.import.s3"
+    assert rows[0]["outcome"] == "succeeded"
+    assert rows[0]["actor"]["id"] == user.subject
+    progress.update(job, phase="done", server_id=sid)
+    assert len(store.history(sid)["items"]) == 1
+    instance_rows = store.history(instance=True)["items"]
+    assert sum(row["action"] == "server.import.s3" and row["outcome"] == "accepted" for row in instance_rows) == 1
+    assert m["destination"]["bucket"] not in json.dumps(instance_rows)

@@ -42,6 +42,7 @@ const can = (permission) => auth.can(permission, route.params.id)
 const ROUTE_TITLE = {
   ServerOverview: 'nav.overview',
   ServerConsole:  'nav.console',
+  ServerChat: 'chat.title',
   ServerPlayers:  'nav.players',
   ServerFiles:    'nav.files',
   ServerBackups:  'nav.backups',

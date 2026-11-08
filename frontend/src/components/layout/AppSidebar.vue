@@ -82,6 +82,7 @@ const settingsTarget = computed(() =>
 const ALL_NAV_ITEMS = [
   { name: 'ServerOverview', label: 'nav.overview',   icon: 'overview' },
   { name: 'ServerConsole',  label: 'nav.console',    icon: 'console'  },
+  { name: 'ServerChat', label: 'chat.title', icon: 'console' },
   { name: 'ServerPlayers',  label: 'nav.players',    icon: 'players'  },
   { name: 'ServerMap', label: 'maps.title', icon: 'network' },
   { name: 'ServerMods',     label: null,             icon: 'mods'     },
@@ -330,7 +331,7 @@ onUnmounted(() => {
 
     <ServerSwitcher v-if="hasServerContext" />
     <button
-      v-else-if="!auth.managed && auth.can('servers.create')"
+      v-else-if="!['PlayersDirectory', 'PlayerDetail'].includes(route.name) && !auth.managed && auth.can('servers.create')"
       type="button"
       class="app-sidebar__no-server-chip"
       :title="railTitle($t('sidebar.noServersTitle'))"

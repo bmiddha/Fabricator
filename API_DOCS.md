@@ -44,6 +44,10 @@ Errors are consistently `{"error": "<message>"}`. Anything under `/api` not list
 ## Server chat
 
 Session-only, per-server `GET` and `POST /api/servers/<server_id>/chat`.
+The server sidebar opens `/server/:id/chat` for users with `chat.read`;
+`chat.send` is separate and never grants reading or console access.
+Player chat heads are cosmetic username lookups, not UUID identity proof;
+offline or unknown authentication modes use initials, never online-account heads.
 Both require `server.view`; reading requires **`chat.read`**, sending requires
 **`chat.send`**, independently of console/log permissions. OIDC `admin`
 includes both; viewer/operator roles do not acquire chat rights automatically.

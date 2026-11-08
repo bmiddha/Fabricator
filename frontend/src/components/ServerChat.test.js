@@ -68,7 +68,7 @@ const item = { id: 'first', kind: 'player', sender: '<script>Alex</script>',
   message: '<img src=x onerror=alert(1)>', ts: '2026-11-08T00:00:00Z' }
 function response(overrides = {}) {
   return Response.json({ items: [item], supported: true, ready: true, running: true,
-    sender: 'Alice', canSend: true, ...overrides })
+    sender: 'Alice', canSend: true, offlineMode: false, ...overrides })
 }
 function submit(message = 'Hello players') {
   const input = document.querySelector('input')
@@ -261,6 +261,14 @@ test('player heads reuse the existing avatar with fixed size, privacy and failur
   assert.equal(head.querySelector('img'), null)
   assert.equal(head.textContent, 'A')
   assert.equal(head.style.width, '32px')
+})
+
+test('offline or unknown authentication mode never gives chat usernames an online account head', async () => {
+  globalThis.fetch = async () => response({ items: [{ ...item, id: 1, sender: 'Alex' }], offlineMode: true })
+  mount()
+  await settle()
+  assert.equal(document.querySelector('.server-chat__message .player-avatar img'), null)
+  assert.equal(document.querySelector('.server-chat__message .player-avatar').textContent, 'A')
 })
 
 test('consecutive messages group by actual sender and source without assigning panel users Minecraft heads', async () => {

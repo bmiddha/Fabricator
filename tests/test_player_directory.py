@@ -16,6 +16,14 @@ UID = "12345678-1234-4234-8234-123456789abc"
 OTHER = "12345678-1234-4234-8234-123456789def"
 
 
+@pytest.fixture(autouse=True)
+def live_modules():
+    global permissions, ServerManager, directory, directory_routes, files, observed, service
+    from backend.auth import permissions
+    from backend.server.manager import ServerManager
+    from backend.server.players import directory, directory_routes, files, observed, service
+
+
 def registry_for(tmp_path):
     registry = MagicMock()
     registry.resolve_install_path.side_effect = lambda s: tmp_path / s["id"]

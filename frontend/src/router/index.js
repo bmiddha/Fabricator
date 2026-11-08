@@ -49,6 +49,7 @@ const routes = [
       { path: '', redirect: { name: 'ServerOverview' } },
       { path: 'overview', name: 'ServerOverview', component: ServerOverviewPage },
       { path: 'console',  name: 'ServerConsole',  component: ServerConsolePage },
+      { path: 'chat', name: 'ServerChat', component: () => import('../views/server/ServerChatPage.vue') },
       { path: 'players',  name: 'ServerPlayers',  component: ServerPlayersPage },
       { path: 'map', name: 'ServerMap', component: ServerMapPage },
       { path: 'mods',     name: 'ServerMods',     component: ServerModsPage },
