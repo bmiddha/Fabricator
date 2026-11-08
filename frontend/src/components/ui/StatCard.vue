@@ -23,9 +23,10 @@ defineProps({
 <template>
   <div class="stat-card">
     <div class="stat-card__label">{{ label }}</div>
-    <div class="stat-card__value" :class="`stat-card__value--${accent}`">
+    <div class="stat-card__value" :class="[`stat-card__value--${accent}`, { 'stat-card__value--visual': $slots.default }]">
       <span>{{ value }}</span>
       <span v-if="unit" class="stat-card__unit">{{ unit }}</span>
+      <div v-if="$slots.default" class="stat-card__visual"><slot /></div>
     </div>
   </div>
 </template>
@@ -61,6 +62,18 @@ defineProps({
 .stat-card__value--primary { color: var(--primary); }
 .stat-card__value--warning { color: var(--warning); }
 .stat-card__value--danger  { color: var(--danger); }
+
+.stat-card__value--visual {
+  flex-wrap: wrap;
+  align-items: center;
+  row-gap: var(--space-2);
+}
+
+.stat-card__visual {
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
+}
 
 .stat-card__unit {
   font-size: var(--text-sm);

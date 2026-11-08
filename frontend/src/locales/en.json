@@ -66,12 +66,12 @@
   },
   "onlineHeads": {
     "title": "Online players",
-    "allPlayers": "All server players",
     "remaining": "+{count} more online",
-    "loading": "Loading online players...",
+    "more": "+{count}",
+    "loading": "Loading heads...",
     "offline": "Server offline.",
     "empty": "No online players observed.",
-    "unavailable": "Online players unavailable.",
+    "unavailable": "Heads unavailable.",
     "partial": "Observed sessions only; players already connected when the panel restarted may be missing.",
     "loadFailed": "Could not load online players."
   },

@@ -184,13 +184,15 @@ onUnmounted(() => {
   <div class="overview-page">
     <InstanceTransfers :key="store.currentServerId" />
     <section class="overview-page__stats" :class="{ 'overview-page__stats--three': !hasContent, 'overview-page__stats--proxy': isVelocity }">
-      <StatCard v-if="!isVelocity" :label="$t('overview.stats.players')" :value="store.serverStatus.players.online" :unit="store.serverStatus.players.max ? `/${store.serverStatus.players.max}` : ''" />
+      <StatCard v-if="!isVelocity" :label="$t('overview.stats.players')" :value="store.serverStatus.players.online" :unit="store.serverStatus.players.max ? `/${store.serverStatus.players.max}` : ''">
+        <template v-if="auth.can('players.read', store.currentServerId)" #default>
+          <OnlinePlayerHeads :server-id="store.currentServerId" :status="store.serverStatus.status" :loader="store.server?.loader || ''" />
+        </template>
+      </StatCard>
       <StatCard :label="$t('overview.stats.uptime')" :value="store.serverStatus.uptime" />
       <StatCard v-if="!isVelocity" :label="$t('overview.stats.tps')" :value="tpsDisplay" :accent="tpsAccent" />
       <StatCard v-if="hasContent" :label="$t('overview.stats.mods')" :value="store.installedMods.length" :accent="store.installedMods.length > 0 ? 'primary' : 'default'" />
     </section>
-
-    <OnlinePlayerHeads :server-id="store.currentServerId" :status="store.serverStatus.status" :loader="store.server?.loader || ''" />
 
     <!-- Forge/NeoForge run a subprocess installer that can take minutes, during
          which every panel below has nothing real to say. Lead with the install

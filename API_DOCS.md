@@ -1207,9 +1207,12 @@ reinstall.
 ### Top-level Minecraft player directory
 
 `GET /api/servers/<server_id>/players/preview` requires `server.view` and
-`players.read` and supplies the overview's bounded head strip:
+`players.read` and supplies the overlapping head stack inside the overview's
+existing Players count card (not a separate section):
 `{players:[{id,namespace,uuid,name}],total,status,offlineMode}`. At most ten
-current observed sessions are returned, with a count/link for the remainder.
+current observed sessions are returned, with a compact `+N` link for the remainder.
+The existing online-player number stays visible; names and coverage information
+remain accessible through labels/tooltips without expanding the card into a list.
 UUIDs come only from observed login events, never cached name resolution.
 Stopped servers are `offline`, unsupported/untracked servers `unavailable`,
 and running snapshots `partial` because the tracker cannot reconstruct

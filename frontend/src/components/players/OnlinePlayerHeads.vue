@@ -65,45 +65,42 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section v-if="allowed" class="online-heads" :aria-label="$t('onlineHeads.title')">
-    <header class="online-heads__header">
-      <h2>{{ $t('onlineHeads.title') }}</h2>
-      <router-link :to="target">{{ $t('onlineHeads.allPlayers') }}</router-link>
-    </header>
+  <div v-if="allowed" class="online-heads" role="group" :aria-label="$t('onlineHeads.title')" :title="$t('onlineHeads.partial')">
     <p v-if="error" class="online-heads__error" role="alert">{{ error }} <button type="button" @click="load">{{ $t('common.retry') }}</button></p>
     <p v-else-if="props.status === 'stopped' || snapshot?.status === 'offline'">{{ $t('onlineHeads.offline') }}</p>
     <p v-else-if="loading" role="status">{{ $t('onlineHeads.loading') }}</p>
     <p v-else-if="!snapshot || snapshot.status === 'unavailable'">{{ $t('onlineHeads.unavailable') }}</p>
     <template v-else>
-      <ul v-if="players.length" class="online-heads__list">
+      <ul v-if="players.length" class="online-heads__list" :aria-label="$t('onlineHeads.title')">
         <li v-for="player in players" :key="player.id || player.name">
-          <router-link :to="player.id ? { name: 'PlayerDetail', params: { playerId: player.id } } : target" :title="player.name">
-            <PlayerAvatar :name="player.name" :uuid="usesPublicAvatar(player) ? player.uuid : null" :size="32"
+          <router-link :to="player.id ? { name: 'PlayerDetail', params: { playerId: player.id } } : target" :title="player.name" :aria-label="player.name">
+            <PlayerAvatar :name="player.name" :uuid="usesPublicAvatar(player) ? player.uuid : null" :size="24"
               :offline-mode="!usesPublicAvatar(player)" />
-            <span>{{ player.name }}</span>
           </router-link>
         </li>
       </ul>
       <p v-else>{{ $t('onlineHeads.empty') }}</p>
-      <router-link v-if="remaining" class="online-heads__remaining" :to="target">{{ $t('onlineHeads.remaining', { count: remaining }) }}</router-link>
-      <p class="online-heads__note">{{ $t('onlineHeads.partial') }}</p>
+      <router-link v-if="remaining" class="online-heads__remaining" :to="target"
+        :aria-label="$t('onlineHeads.remaining', { count: remaining })"
+        :title="$t('onlineHeads.remaining', { count: remaining })">{{ $t('onlineHeads.more', { count: remaining }) }}</router-link>
+      <span class="online-heads__note">{{ $t('onlineHeads.partial') }}</span>
     </template>
-  </section>
+  </div>
 </template>
 
 <style scoped>
-.online-heads { min-width: 0; padding: var(--space-3) 0; }
-.online-heads__header { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-3); }
-h2 { font-size: var(--text-sm); color: var(--text-primary); font-weight: 600; }
+.online-heads { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); min-width: 0; max-width: 100%; letter-spacing: normal; }
 a, button { color: var(--text-secondary); font-size: var(--text-sm); text-underline-offset: 3px; }
 a:hover, button:hover { color: var(--primary); }
 a:focus-visible, button:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
-.online-heads__list { display: flex; flex-wrap: wrap; list-style: none; gap: var(--space-3) var(--space-5); padding: 0; margin: 0; }
-li a { display: flex; align-items: center; gap: var(--space-2); text-decoration: none; max-width: 180px; }
-li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.online-heads__remaining { display: inline-block; margin-top: var(--space-3); }
-p { font-size: var(--text-sm); line-height: var(--leading-normal); }
-.online-heads__note { margin-top: var(--space-3); color: var(--text-muted); }
+.online-heads__list { display: flex; list-style: none; padding: 0; margin: 0; }
+li { position: relative; border-radius: var(--radius-sm); background: var(--bg-secondary); }
+li + li { margin-left: -16px; }
+li:hover, li:focus-within { z-index: 1; }
+li a { display: flex; border-radius: var(--radius-sm); text-decoration: none; }
+.online-heads__remaining { display: inline-flex; align-items: center; justify-content: center; min-height: 24px; padding: 0 var(--space-1); font-size: var(--text-xs); text-decoration: none; }
+p { font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--text-muted); }
+.online-heads__note { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .online-heads__error { color: var(--danger); }
 button { background: transparent; border: 0; text-decoration: underline; cursor: pointer; margin-left: var(--space-2); }
 </style>

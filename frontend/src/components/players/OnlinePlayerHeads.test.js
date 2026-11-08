@@ -107,14 +107,16 @@ test('at most ten accessible heads, remainder link and public-UUID-only provider
   assert.equal(document.querySelectorAll('.player-avatar').length, 10)
   assert.equal(document.querySelectorAll('img').length, 1)
   const image = document.querySelector('img')
-  assert.equal(image.getAttribute('src'), `https://mc-heads.net/avatar/${uid}/32`)
+  assert.equal(image.getAttribute('src'), `https://mc-heads.net/avatar/${uid}/24`)
   assert.equal(image.getAttribute('referrerpolicy'), 'no-referrer')
   assert.equal(document.querySelectorAll('.player-avatar__initial').length, 10)
   image.dispatchEvent(new dom.window.Event('load'))
   await nextTick()
   assert.equal(document.querySelectorAll('.player-avatar__initial').length, 9)
   assert.equal(document.querySelector('.online-heads li a').getAttribute('title'), 'Player0')
-  assert.match(document.body.textContent, /\+3 more online/)
+  assert.equal(document.querySelector('.online-heads__remaining').textContent, '+3')
+  assert.equal(document.querySelector('.online-heads__remaining').getAttribute('aria-label'), '+3 more online')
+  assert.equal(document.querySelector('.online-heads li a').getAttribute('aria-label'), 'Player0')
   assert.ok(calls.every(c => c.options.method === 'GET' && c.url.includes('/api/servers/a/players/preview')))
   document.querySelector('.online-heads__remaining').click()
   await settle()
@@ -164,7 +166,7 @@ test('stopped, empty, unavailable, loading and failed snapshots are explicit', a
   assert.match(document.body.textContent, /No online players observed/)
   props.status = 'starting'
   await settle()
-  assert.match(document.body.textContent, /Online players unavailable/)
+  assert.match(document.body.textContent, /Heads unavailable/)
   globalThis.fetch = async () => { throw new Error('Preview disconnected') }
   props.status = 'running'
   await settle()
@@ -176,7 +178,7 @@ test('server and permission changes discard identities and in-flight responses',
   let resolve
   requests(() => new Promise(done => { resolve = done }))
   const { auth } = await mount()
-  assert.match(document.querySelector('[role=status]').textContent, /Loading online players/)
+  assert.match(document.querySelector('[role=status]').textContent, /Loading heads/)
   auth.user = null
   auth.revision++
   await settle()
@@ -216,6 +218,11 @@ test('overview keeps metrics, logs, mod management, connection and console navig
   assert.match(document.body.textContent, /ExistingMod/)
   assert.match(document.body.textContent, /25565/)
   assert.equal(document.querySelectorAll('.online-heads li').length, 2)
+  const playersCard = document.querySelector('.stat-card')
+  assert.equal(playersCard.querySelector('.online-heads'), document.querySelector('.online-heads'))
+  assert.equal(playersCard.querySelector('.stat-card__value > span').textContent, '13')
+  assert.equal(document.querySelector('.online-heads__header'), null)
+  assert.ok([...document.querySelectorAll('.stat-card')].slice(1).every(card => !card.querySelector('.online-heads')))
   const consoleLink = [...document.querySelectorAll('.overview-page__panel-link')].find(a => a.textContent.includes('Console'))
   assert.ok(consoleLink)
   consoleLink.click()
