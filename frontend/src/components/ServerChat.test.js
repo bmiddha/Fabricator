@@ -319,3 +319,72 @@ test('send icon stays inside the message box and sending preserves the viewport 
   assert.equal(document.querySelector('.server-chat__send'), button)
   assert.equal(button.getAttribute('aria-busy'), 'false')
 })
+
+test('group timestamps survive minute rollover and split at time, sender, source, event and local date boundaries', async () => {
+  const stamp = (hour, minute, second, day = 7) => new Date(2026, 10, day, hour, minute, second).toISOString()
+  const entries = [
+    { sender: 'Alex', ts: stamp(12, 34, 50) },
+    { sender: 'Alex', ts: stamp(12, 35, 10) },
+    { sender: 'Alex', ts: stamp(12, 40, 9) },
+    { sender: 'Alex', ts: stamp(12, 45, 9) },
+    { sender: 'Bob', ts: stamp(12, 45, 10) },
+    { sender: 'Bob', kind: 'fabricator', ts: stamp(12, 45, 11) },
+    { sender: 'Bob', kind: 'system', ts: stamp(12, 45, 12) },
+    { sender: 'Bob', kind: 'fabricator', ts: stamp(12, 45, 13) },
+    { sender: 'Alex', ts: stamp(23, 59, 59) },
+    { sender: 'Alex', ts: stamp(0, 0, 1, 8) },
+  ]
+  globalThis.fetch = async () => response({
+    items: entries.map((entry, index) => ({ ...item, id: index + 1, message: `message ${index}`, ...entry })),
+  })
+  mount()
+  await settle()
+  const rows = [...document.querySelectorAll('.server-chat__message')]
+  assert.deepEqual(rows.map(row => row.classList.contains('is-continued')),
+    [false, true, true, false, false, false, false, false, false, false])
+  assert.deepEqual(rows.map(row => Boolean(row.querySelector('.server-chat__meta > time'))),
+    [false, false, true, true, true, true, true, true, true, true])
+  assert.equal(rows[2].querySelector('.server-chat__meta > time').getAttribute('datetime'), entries[2].ts)
+})
+
+test('each grouped bubble exposes its exact time through native focusable and tappable disclosure', async () => {
+  const ts = '2026-11-08T00:35:07.321Z'
+  globalThis.fetch = async () => response({ items: [
+    { ...item, id: 1, sender: 'Alex', message: 'first', ts },
+    { ...item, id: 2, sender: 'Alex', message: 'second', ts },
+  ] })
+  mount()
+  await settle()
+  assert.equal(document.querySelectorAll('.server-chat__meta > time').length, 1)
+  for (const details of document.querySelectorAll('.server-chat__message-details')) {
+    const summary = details.querySelector('summary')
+    const exact = details.querySelector('.server-chat__exact-time')
+    assert.equal(details.open, false)
+    assert.equal(summary.getAttribute('tabindex'), '0')
+    assert.equal(summary.getAttribute('aria-describedby'), exact.id)
+    assert.match(summary.title, /321/)
+    assert.equal(exact.getAttribute('datetime'), ts)
+    assert.equal(exact.textContent, ts)
+    summary.focus()
+    assert.equal(document.activeElement, summary)
+    summary.click()
+    await settle()
+    assert.equal(details.open, true)
+    summary.click()
+    await settle()
+    assert.equal(details.open, false)
+  }
+})
+
+test('collapsing timestamps never hides individual send failures or uncertain outcomes', async () => {
+  globalThis.fetch = async () => response({ items: [
+    { ...item, id: 1, kind: 'fabricator', sender: 'Alice', status: 'failed' },
+    { ...item, id: 2, kind: 'fabricator', sender: 'Alice', status: 'pending' },
+    { ...item, id: 3, kind: 'fabricator', sender: 'Alice', status: 'submitted' },
+  ] })
+  mount()
+  await settle()
+  assert.equal(document.querySelectorAll('.server-chat__meta > time').length, 1)
+  const outcomes = [...document.querySelectorAll('.server-chat__meta > span')].map(el => el.textContent)
+  assert.deepEqual(outcomes, ['Submission failed; delivery uncertain', 'Submission outcome unknown', 'Submitted'])
+})

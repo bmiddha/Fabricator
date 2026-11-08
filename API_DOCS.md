@@ -89,7 +89,13 @@ and may have gaps. `outcomes` refreshes the status of the latest 200 earlier
 panel submissions on delta reads; no unrelated actors/payloads are exposed.
 The chat component loads earlier pages and deduplicates by capture ID.
 Its full-height flex layout keeps the composer anchored while the conversation
-scrolls; consecutive messages from the same source/sender are grouped. The
+scrolls; consecutive messages from the same source/sender and local calendar day,
+less than five minutes apart, are grouped with one timestamp beneath the final
+bubble. Minute rollover alone does not split a group; sender/source/day changes,
+non-chat events, backwards timestamps and gaps of five minutes or more do.
+Every bubble is a native disclosure: tap/click or Enter/Space reveals its exact
+stored timestamp; hover and screen-reader descriptions also expose the full time.
+This changes presentation only, not capture order or backend history. The
 composer shows only `portal - <display name>` and an inline send icon; detailed
 retention/delivery semantics remain in this API reference. Player heads reuse
 the existing username-based `mc-heads.net` avatar lookup for standard Java names,

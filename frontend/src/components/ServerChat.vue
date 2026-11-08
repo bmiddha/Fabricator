@@ -25,12 +25,10 @@ const historyError = ref('')
 const allowed = computed(() => canSend.value && state.value?.canSend && !loading.value
   && !error.value && !sending.value && now.value >= retryUntil.value)
 const conversation = computed(() => (state.value?.items || []).map((item, index, items) => {
-  const previous = items[index - 1]
-  const gap = previous ? Date.parse(item.ts) - Date.parse(previous.ts) : NaN
   return {
     ...item,
-    continued: Boolean(previous && previous.kind === item.kind && previous.sender === item.sender
-      && gap >= 0 && gap < 5 * 60 * 1000),
+    continued: continuesGroup(items[index - 1], item),
+    groupEnd: !continuesGroup(item, items[index + 1]),
     own: item.kind === 'fabricator' && item.sender === state.value?.sender,
   }
 }))
@@ -39,9 +37,24 @@ let timer
 let controller
 let liveCursor = 0
 
+function continuesGroup(previous, item) {
+  if (!previous || !item || !['player', 'fabricator'].includes(item.kind)
+    || previous.kind !== item.kind || previous.sender !== item.sender) return false
+  const before = new Date(previous.ts)
+  const after = new Date(item.ts)
+  const gap = after - before
+  return gap >= 0 && gap < 5 * 60 * 1000 && before.toDateString() === after.toDateString()
+}
 function time(ts) {
   const date = new Date(ts)
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+function fullTime(ts) {
+  const date = new Date(ts)
+  return Number.isNaN(date.getTime()) ? ts : date.toLocaleString([], {
+    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    second: '2-digit', fractionalSecondDigits: 3, timeZoneName: 'short',
+  })
 }
 function trackScroll() {
   const el = transcript.value
@@ -206,9 +219,14 @@ onUnmounted(() => { generation++; clearTimeout(timer); controller?.abort() })
               <strong class="server-chat__author" :class="{ 'server-chat__sr-only': item.continued }">
                 {{ item.kind === 'fabricator' ? `Fabricator · ${item.sender}` : item.sender }}
               </strong>
-              <p class="server-chat__bubble">{{ item.message }}</p>
-              <div class="server-chat__meta">
-                <time :datetime="item.ts">{{ time(item.ts) }}</time>
+              <details class="server-chat__message-details">
+                <summary class="server-chat__bubble" tabindex="0" :title="fullTime(item.ts)"
+                  :aria-describedby="`server-chat-time-${props.serverId}-${item.id}`">{{ item.message }}</summary>
+                <time :id="`server-chat-time-${props.serverId}-${item.id}`" class="server-chat__exact-time"
+                  :datetime="item.ts" :aria-label="fullTime(item.ts)">{{ item.ts }}</time>
+              </details>
+              <div v-if="item.groupEnd || item.status" class="server-chat__meta">
+                <time v-if="item.groupEnd" :datetime="item.ts" :title="fullTime(item.ts)">{{ time(item.ts) }}</time>
                 <span v-if="item.status">{{ $t(item.status === 'submitted' ? 'chat.submitted'
                   : item.status === 'failed' ? 'chat.failed' : 'chat.unknownOutcome') }}</span>
               </div>
@@ -273,7 +291,14 @@ onUnmounted(() => { generation++; clearTimeout(timer); controller?.abort() })
   display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); }
 .server-chat__author { color: var(--text-secondary); font-size: var(--text-sm); overflow-wrap: anywhere; }
 .server-chat__bubble { padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
-  background: var(--bg-tertiary); color: var(--text-primary); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+  background: var(--bg-tertiary); color: var(--text-primary); line-height: var(--leading-normal);
+  overflow-wrap: anywhere; cursor: pointer; list-style: none; }
+.server-chat__bubble::-webkit-details-marker { display: none; }
+.server-chat__bubble:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.server-chat__message-details { max-width: 100%; }
+.server-chat__exact-time { display: block; margin-top: var(--space-1); color: var(--text-secondary);
+  font-size: var(--text-xs); overflow-wrap: anywhere; }
+.server-chat__message.is-own .server-chat__exact-time { text-align: right; }
 .server-chat__meta { display: flex; flex-wrap: wrap; gap: var(--space-2); color: var(--text-muted); font-size: var(--text-xs); }
 .server-chat__message.is-own { grid-template-columns: minmax(0, 1fr) 32px; }
 .server-chat__message.is-own .server-chat__avatar { grid-column: 2; grid-row: 1; }
