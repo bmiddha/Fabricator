@@ -57,6 +57,8 @@ async function onLock() {
 
 const serverId = computed(() => route.params.id)
 const hasServerContext = computed(() => Boolean(serverId.value))
+const canReadDirectory = computed(() => auth.can('server.view') && auth.can('players.read')
+  || Object.keys(auth.user?.servers || {}).some(id => auth.can('server.view', id) && auth.can('players.read', id)))
 
 // Every nav item in here is a link, so a tap that navigates has done what the
 // drawer was opened for. Watching the resolved path (not route.name) also
@@ -341,6 +343,14 @@ onUnmounted(() => {
     </button>
 
     <nav class="app-sidebar__nav" :aria-label="$t('sidebar.navLabel')">
+      <router-link v-if="canReadDirectory" :to="{ name: 'PlayersDirectory' }"
+        class="app-sidebar__nav-item" :class="{ 'is-active': ['PlayersDirectory', 'PlayerDetail'].includes(route.name) }"
+        :title="railTitle($t('playerDirectory.title'))">
+        <svg class="app-sidebar__nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6M21 21v-3a6 6 0 0 0-4-5"/>
+        </svg>
+        <span class="app-sidebar__label">{{ $t('playerDirectory.title') }}</span>
+      </router-link>
       <component
         :is="hasServerContext ? 'router-link' : 'div'"
         v-for="item in navItems"

@@ -31,12 +31,13 @@ from typing import Dict
 class OnlinePlayer:
     """Represents a player currently connected to a running server.
 
-    `uuid` is populated lazily by the players service when /online is served —
-    the stdout-stream loop only sees names and must not block on HTTP lookups.
+    `uuid` may be enriched by the legacy players service. `observed_uuid`
+    is only supplied by Minecraft's login event, never by a name lookup.
     """
     name: str
     joined_at: datetime
     uuid: Optional[str] = None
+    observed_uuid: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,7 @@ class ServerManager:
     _SYSTEM_CHAT = r'(?:(?i:system chat): )?'
     _PLAYER_JOIN_RE = re.compile(_LOG_PREFIX + _SYSTEM_CHAT + r'([^<>\[\]:]+) joined the game')
     _PLAYER_LEAVE_RE = re.compile(_LOG_PREFIX + _SYSTEM_CHAT + r'([^<>\[\]:]+) left the game')
+    _PLAYER_ID_RE = re.compile(_LOG_PREFIX + r'UUID of player ([A-Za-z0-9_]{1,16}) is ([0-9a-fA-F-]{36})\s*$')
     # SGR colour escapes some setups emit around the message on the pipe.
     _ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
     # "Done (12.345s)! For help, type "help"" — the world is loaded and the
@@ -165,6 +167,7 @@ class ServerManager:
         # immediate-exit diagnostic tail.
         self._buffer_lock = threading.Lock()
         self._players: Dict[str, OnlinePlayer] = {}
+        self._login_profiles: Dict[str, tuple[str, float]] = {}
         # Which TPS command this server understands is decided from these two.
         # Public and re-assignable: the registry refreshes them before a start
         # exactly as it does self.command, so an upgraded server is sampled
@@ -361,19 +364,36 @@ class ServerManager:
                             self._stdout_total += 1
                 if is_stdout and not self._ready_event.is_set() and self._SERVER_READY_RE.search(clean):
                     self._ready_event.set()
-                join_match = self._PLAYER_JOIN_RE.search(clean)
+                profile_match = self._PLAYER_ID_RE.search(clean) if is_stdout else None
+                if profile_match:
+                    with self._lock:
+                        now = time.monotonic()
+                        self._login_profiles = {name: profile for name, profile in self._login_profiles.items()
+                                                if now - profile[1] < 120}
+                        self._login_profiles[profile_match.group(1)] = (profile_match.group(2), now)
+                join_match = self._PLAYER_JOIN_RE.search(clean) if is_stdout else None
                 if join_match:
                     name = join_match.group(1)
                     with self._lock:
+                        profile = self._login_profiles.pop(name, None)
+                        uid = profile[0] if profile and time.monotonic() - profile[1] < 120 else None
                         self._players[name] = OnlinePlayer(
                             name=name,
                             joined_at=datetime.now(timezone.utc),
+                            uuid=uid,
+                            observed_uuid=uid,
                         )
+                    if uid:
+                        from backend.server.players.observed import record
+                        record(self.cwd, uid, name, joined=True)
                 else:
-                    leave_match = self._PLAYER_LEAVE_RE.search(clean)
+                    leave_match = self._PLAYER_LEAVE_RE.search(clean) if is_stdout else None
                     if leave_match:
                         with self._lock:
-                            self._players.pop(leave_match.group(1), None)
+                            player = self._players.pop(leave_match.group(1), None)
+                        if player and player.observed_uuid:
+                            from backend.server.players.observed import record
+                            record(self.cwd, player.observed_uuid, player.name)
                 if not suppress:
                     print(line, end="")
             pipe.close()
@@ -676,6 +696,7 @@ class ServerManager:
             self._process = None
             self._ps_process = None
             self._players.clear()
+            self._login_profiles.clear()
             self._stdout_thread = None
             self._stderr_thread = None
             self._tps_thread = None
@@ -759,6 +780,7 @@ class ServerManager:
         with self._lock:
             if not running:
                 self._players.clear()
+                self._login_profiles.clear()
             status["players"] = {"online": len(self._players)}
             tps_value = self._tps
             tps_at = self._tps_at

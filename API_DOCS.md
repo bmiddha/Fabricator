@@ -1204,6 +1204,43 @@ reinstall.
 
 ## Players
 
+### Top-level Minecraft player directory
+
+`GET /api/players` returns `{players, servers, total, offset, limit}`. Filters:
+`q` (name, historical name or UUID, up to 100 characters), `server` (server ID),
+`relation=all|joined|whitelisted|online`, `offset` (non-negative) and `limit`
+(1–100, default 50). `GET /api/players/<player_id>` returns one identity or 404.
+The SPA exposes these at `/players` and `/players/:playerId`.
+
+Both endpoints aggregate **only** game servers where the caller has
+`server.view` and `players.read`; this applies before file access, search,
+counts, historical names and detail generation. Whitelist read access never
+grants `players.whitelist.manage`. Velocity proxies are excluded.
+
+An identity contains `id`, `namespace`, `uuid`, `name`, `names`, `lastSeen` and
+`servers`. Each server relationship has `id`, `name`, `joined`, `whitelisted`,
+`online` and `lastSeen`. Relationship values are true, false or null (unknown).
+UUID v4 identities use `minecraft:<uuid>`. Synthetic offline UUID v3 identities
+use `offline:<server_id>:<uuid>`; other UUID versions are unverified and
+server-scoped. Names never merge identities or link them to panel/OIDC users.
+
+Join evidence is limited to saved playerdata (both supported layouts) and
+UUID-attributed join/leave messages from the existing stdout reader, persisted
+atomically in `.fabricator/player-history.json` under each server. No log-file
+ingestion, Mojang network lookup or usercache TTL is treated as a join.
+Historical names cover observed sessions and current source files only.
+Old/imported history and unsupported login messages remain partial; missing
+join evidence means unknown, **not** never joined. Forgetting the per-server
+name cache does not delete observed session history or world playerdata.
+
+Whitelist membership is read fresh from `whitelist.json`, including stopped
+servers. A missing/unreadable file is unavailable, not an empty whitelist.
+Online true requires an observed UUID-attributed live session; stopped servers
+report false, and unobserved running sessions remain unknown (including after
+a panel restart). `servers` includes per-source availability for authorized
+servers only. Last seen is an observed session timestamp or playerdata mtime,
+not a precise historical logout ledger. Refresh the directory after changes.
+
 Player names must match `[A-Za-z0-9_]{1,16}`. Ban/kick reasons must be a single line of ≤ 256
 characters. When the server is running, changes are applied through console commands; when it is
 stopped, the JSON files are edited directly.

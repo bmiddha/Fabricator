@@ -29,6 +29,8 @@ const routes = [
     component: RootLayout,
     children: [
       { path: '', name: 'Servers', component: Servers },
+      { path: 'players', name: 'PlayersDirectory', component: () => import('../views/PlayersDirectory.vue') },
+      { path: 'players/:playerId', name: 'PlayerDetail', component: () => import('../views/PlayersDirectory.vue') },
       // Same page as ServerGeneralSettings, reachable without a server. The
       // panel-wide settings (Java, MCP, password, display) do not need one;
       // the page hides its per-server Auto-start panel when the id is absent.

@@ -20,6 +20,8 @@ def _server(method, suffix, *permissions):
 
 
 _rule("GET", "/servers", target="collection")
+_rule("GET", "/players", target="collection")
+_rule("GET", "/players/<path:player_id>", target="collection")
 _rule("POST", "/servers", "servers.create")
 _rule("POST", "/servers/import", "servers.import")
 _rule("POST", "/servers/import/inspect", "servers.import")
