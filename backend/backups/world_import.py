@@ -46,7 +46,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from backend.backups import archive, progress, storage
+from backend.backups import archive, preservation, progress, storage
 from backend.server import storage as server_storage
 from backend.server.locks import get_server_lock
 from backend.server.registry import get_server_process_registry
@@ -274,6 +274,7 @@ def run_world_import(
     start_time = time.monotonic()
     was_running = False
     staging_root: Optional[Path] = None
+    retain_staging = False
     try:
         runtime = registry.get_status(server_id) or {}
         was_running = runtime.get("status") == "running"
@@ -332,19 +333,10 @@ def run_world_import(
 
         # Swap the produced world dirs onto the live install.
         progress.update(job_id, phase="swapping")
-        _swap_world_dirs(install_path, normalized_root, produced, server_id)
-
-        # Replace semantics: drop any live dimension dir for this level that the
-        # imported world did NOT provide — otherwise a world with fewer
-        # dimensions inherits the previous world's Nether/End and yields a
-        # mismatched world. The mandatory safety snapshot above already captured
-        # them, so this is recoverable.
-        for suffix in ("_nether", "_the_end"):
-            dim_name = f"{level_name}{suffix}"
-            if dim_name not in produced:
-                stale_dim = install_path / dim_name
-                if stale_dim.is_dir():
-                    shutil.rmtree(stale_dim, ignore_errors=True)
+        replacement_names = list(dict.fromkeys(
+            produced + [f"{level_name}_nether", f"{level_name}_the_end"]
+        ))
+        _swap_world_dirs(install_path, normalized_root, replacement_names, server_id)
 
         duration = round(time.monotonic() - start_time, 3)
         import_record = storage.record_snapshot(
@@ -366,9 +358,10 @@ def run_world_import(
             },
         )
     except Exception as exc:
+        retain_staging = isinstance(exc, preservation.SwapRollbackError)
         if progress.get(job_id).get("phase") not in ("done", "failed"):
             progress.update(job_id, phase="failed", error=str(exc))
-        if was_running:
+        if was_running and not retain_staging:
             _restart_server_safe(server, registry, job_id)
         raise
     else:
@@ -390,7 +383,7 @@ def run_world_import(
         )
         return import_record
     finally:
-        if staging_root is not None and staging_root.exists():
+        if staging_root is not None and staging_root.exists() and not retain_staging:
             shutil.rmtree(staging_root, ignore_errors=True)
         archive_path.unlink(missing_ok=True)
         with _active_uploads_lock:
@@ -598,6 +591,9 @@ def _swap_world_dirs(
     safety snapshot is the ultimate backstop, but we still avoid leaving a
     half-swapped world behind.
     """
+    preservation.preserve_local_archives(
+        install_path, normalized_root, server_id, replaced_names=produced,
+    )
     holding = install_path.parent / (
         f".worldold-{server_id}-"
         f"{time.strftime('%Y%m%d%H%M%S', time.gmtime())}-{uuid.uuid4().hex[:6]}"
@@ -605,6 +601,7 @@ def _swap_world_dirs(
     holding.mkdir(parents=True, exist_ok=False)
     moved_aside: List[Tuple[str, Path]] = []
     moved_in: List[Path] = []
+    rollback_failed = False
     try:
         for name in produced:
             live = install_path / name
@@ -612,20 +609,38 @@ def _swap_world_dirs(
                 aside = holding / name
                 os.replace(live, aside)
                 moved_aside.append((name, aside))
-            os.replace(normalized_root / name, install_path / name)
-            moved_in.append(install_path / name)
+            if (normalized_root / name).exists():
+                os.replace(normalized_root / name, install_path / name)
+                moved_in.append(install_path / name)
     except OSError:
         # Roll back: remove anything we moved in, restore originals.
+        errors = []
         for target in moved_in:
-            shutil.rmtree(target, ignore_errors=True)
+            try:
+                shutil.rmtree(target)
+            except OSError as exc:
+                errors.append(exc)
         for name, aside in moved_aside:
             try:
                 os.replace(aside, install_path / name)
-            except OSError:  # pragma: no cover - best effort
-                pass
+            except OSError as exc:
+                errors.append(exc)
+        if errors:
+            rollback_failed = True
+            logger.error("World rollback failed; original trees retained at %s: %s", holding, errors)
+            try:
+                preservation.recover_snapshot_locations(server_id, install_path, holding)
+            except (OSError, ValueError) as index_error:
+                logger.exception("Backup index recovery failed; original evidence remains at %s", holding)
+                errors.append(index_error)
+            raise preservation.SwapRollbackError(holding, normalized_root, errors[0])
         raise
     finally:
-        shutil.rmtree(holding, ignore_errors=True)
+        if not rollback_failed:
+            try:
+                shutil.rmtree(holding)
+            except OSError:
+                logger.exception("World swap holding cleanup failed; files retained at %s", holding)
 
 
 def _write_safety_snapshot(

@@ -95,6 +95,30 @@ safety snapshot, not a local mirror of the remote archive. Any failure to write
 or record it aborts restore before live files are modified. Both overlay and
 reset restore modes retain their existing semantics.
 
+Reset restore retains local archives before replacing the installation, including
+the new safety archive, the backup index when stored inside the installation,
+and unindexed/partial evidence in the default `backups/` directory. Custom local
+destinations retain indexed files, archive siblings and backup staging evidence;
+unrelated old game files are not copied into a reset installation. Recorded
+locations remain authoritative after a configuration is removed. External local
+destinations and S3 objects are not moved. World replacement/import likewise
+retains archives nested inside the replaced world directories; independent
+instance forks do not inherit the source's backup schedules or archives.
+
+Retention uses hard links where supported and complete, fsynced copies otherwise.
+Permission, space, unsafe symlink/special-file or directory-collision failures
+abort before replacing live files. Existing retained archives take precedence
+over regular-file archive collisions in extracted content. Already-missing
+archive records are retained, not silently pruned or presented as recovered.
+If publishing fails, the original tree is rolled back. If rollback also fails,
+original and staging trees are kept at the locations in the error, available
+local snapshot records are relocated to the retained original tree, and the
+server is **not automatically restarted**. Recover the installation before
+starting it; failed index recovery is explicitly reported and still leaves the
+actual archive evidence intact. Cleanup failure after successful publication
+retains the old holding tree and logs its location. This is filesystem-operation
+rollback protection, not a guarantee against power loss or filesystem corruption.
+
 Each snapshot records its bucket, endpoint, region, alias, exact object key and
 checksum. Configuration edits never redirect old snapshots. Retention and
 deletion act only on those exact, ownership-checked archive and sidecar keys,

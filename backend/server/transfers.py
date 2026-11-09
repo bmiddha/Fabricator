@@ -21,7 +21,7 @@ import threading
 import tarfile
 import uuid
 
-from backend.backups import archive, progress
+from backend.backups import archive, preservation, progress
 from backend.backups import storage as backup_storage
 from backend.managed import is_managed
 from backend.server import storage, worlds
@@ -607,6 +607,9 @@ def run(kind, source_id, data, job_id=None, *, audit=True):
                 _sync_dir(stage)
                 _sync_dir(staged_source)
                 names = [dest_name, dest_name + "_nether", dest_name + "_the_end"] if plan["layout"] == "bukkit-split" else [dest_name]
+                preservation.preserve_local_archives(
+                    root_dest, stage, plan["destinationId"], replaced_names=names,
+                )
                 (txn / "old").mkdir()
                 journal = {"names": names, "existing": [n for n in names if (root_dest / n).exists()], "committed": False}
                 staged_entries, _ = _scan(stage)

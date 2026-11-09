@@ -18,7 +18,7 @@
    - **in_place** — copy/overwrite from staging onto the live dir. Files
      only in the live dir are preserved (overlay semantics).
    - **reset**    — atomic-swap (rename live → ``.old-...``, replace
-     with staging, ``shutil.rmtree`` the old dir).
+     with staging, preserving backup archives before cleaning the old dir).
 
 4. Record a ``type="restore"`` snapshot row with a message describing
    the mode.
@@ -41,7 +41,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from backend.backups import archive, destinations, progress, storage
+from backend.backups import archive, destinations, preservation, progress, storage
 from backend.server import storage as server_storage
 from backend.server.locks import get_server_lock
 from backend.server.registry import get_server_process_registry
@@ -254,9 +254,8 @@ def _run_restore_local(
         staging_root = install_path.parent / (
             f".restore-{server_id}-{time.strftime('%Y%m%d%H%M%S', time.gmtime())}-{uuid.uuid4().hex[:6]}"
         )
-        if staging_root.exists():
-            shutil.rmtree(staging_root, ignore_errors=True)
         staging_root.mkdir(parents=True, exist_ok=False)
+        retain_staging = False
         try:
             _extract_archive(archive_path, staging_root)
 
@@ -265,11 +264,16 @@ def _run_restore_local(
                 _overlay_copy(staging_root, install_path)
             else:
                 progress.update(job_id, phase="swapping")
-                _preserve_local_archives(install_path, staging_root, server_id)
                 _atomic_swap(install_path, staging_root, server_id)
+        except preservation.SwapRollbackError:
+            retain_staging = True
+            raise
         finally:
-            if staging_root.exists():
-                shutil.rmtree(staging_root, ignore_errors=True)
+            if staging_root.exists() and not retain_staging:
+                try:
+                    shutil.rmtree(staging_root)
+                except OSError:
+                    logger.exception("Restore staging cleanup failed; files retained at %s", staging_root)
 
         duration = round(time.monotonic() - start_time, 3)
         restore_record = storage.record_snapshot(
@@ -291,7 +295,7 @@ def _run_restore_local(
     except Exception as exc:
         if progress.get(job_id).get("phase") not in ("done", "failed"):
             progress.update(job_id, phase="failed", error=str(exc))
-        if was_running:
+        if was_running and not isinstance(exc, preservation.SwapRollbackError):
             _restart_server_safe(server, registry, job_id)
         raise
     else:
@@ -362,9 +366,14 @@ def _write_safety_snapshot(
         storage_rel = None  # storage lives outside the install tree — nothing to skip
 
     try:
+        storage_skip = archive.subtree_skipper(storage_rel)
         warnings = archive.write_tree_tar(
-            install_path, tmp_path, skip=archive.subtree_skipper(storage_rel),
+            install_path, tmp_path,
+            skip=lambda name: name == "backups" or name.startswith("backups/")
+            or (storage_skip is not None and storage_skip(name)),
         )
+        with tmp_path.open("rb") as handle:
+            os.fsync(handle.fileno())
         os.replace(tmp_path, final_path)
     except Exception:
         try:
@@ -460,37 +469,15 @@ def _overlay_copy(src: Path, dst: Path) -> None:
         shutil.copy2(entry, target)
 
 
-def _preserve_local_archives(install_path: Path, staging: Path, server_id: str) -> None:
-    """Keep recorded archives inside the live tree, especially the new safety tar."""
-    for snapshot in storage.list_snapshots(server_id):
-        raw = snapshot.get("filePath")
-        if not raw:
-            continue
-        source = Path(raw)
-        try:
-            relative = source.resolve().relative_to(install_path.resolve())
-        except ValueError:
-            continue
-        if not source.is_file():
-            continue
-        target = staging / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.unlink(missing_ok=True)
-        try:
-            os.link(source, target)
-        except OSError:
-            shutil.copy2(source, target)
-
-
 def _atomic_swap(install_path: Path, staging: Path, server_id: str) -> None:
-    """Rename live → ``.old-...``, replace with staging, ``rmtree`` old.
-
-    Mirrors the legacy ``restore_server_backup`` swap dance.
-    """
+    """Prepare retained archives, then replace live with rollback on failure."""
+    preservation.preserve_local_archives(install_path, staging, server_id)
     parent = install_path.parent
     old_dir = parent / (
         f".old-{server_id}-{time.strftime('%Y%m%d%H%M%S', time.gmtime())}-{uuid.uuid4().hex[:6]}"
     )
+    if old_dir.exists() or old_dir.is_symlink():
+        raise FileExistsError(f"Restore holding directory already exists: {old_dir}")
     os.replace(install_path, old_dir)
     try:
         os.replace(staging, install_path)
@@ -499,10 +486,19 @@ def _atomic_swap(install_path: Path, staging: Path, server_id: str) -> None:
         # leave the server pointing at a missing path.
         try:
             os.replace(old_dir, install_path)
-        except OSError:
-            pass
+        except OSError as rollback_error:
+            logger.exception("Restore rollback failed; original tree retained at %s", old_dir)
+            try:
+                preservation.recover_snapshot_locations(server_id, install_path, old_dir)
+            except (OSError, ValueError) as index_error:
+                logger.exception("Backup index recovery failed; original evidence remains at %s", old_dir)
+                rollback_error = OSError(f"{rollback_error}; backup index recovery failed: {index_error}")
+            raise preservation.SwapRollbackError(old_dir, staging, rollback_error)
         raise
-    shutil.rmtree(old_dir, ignore_errors=True)
+    try:
+        shutil.rmtree(old_dir)
+    except OSError:
+        logger.exception("Restore committed but old-tree cleanup failed: %s", old_dir)
 
 
 def _restart_server_safe(server: Dict[str, Any], registry, job_id: str) -> None:
