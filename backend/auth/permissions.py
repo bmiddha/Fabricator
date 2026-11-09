@@ -39,6 +39,7 @@ for method in ("PUT", "DELETE"):
     _rule(method, "/notifications/destinations/<destination_id>", "notifications.manage")
 _rule("POST", "/notifications/destinations/<destination_id>/test", "notifications.manage")
 _server("GET", "/activity", "activity.read")
+_server("GET", "/tasks", "server.view")
 _server("GET", "/alerts", "activity.read")
 _server("GET", "/chat", "chat.read")
 _server("POST", "/chat", "chat.send")
@@ -358,8 +359,8 @@ def authorize(user: Principal):
         body = request.get_json(silent=True)
         sid = body.get("server_id") if isinstance(body, dict) else None
     if target == "backup-job":
-        from backend.backups.progress import get
-        job = get(request.view_args["job_id"])
+        from backend.backups.progress import get_status
+        job = get_status(request.view_args["job_id"])
         sid = job.get("server_id") if job else None
         if job:
             required = ({"restore": "backups.restore", "world_import": "worlds.import"}.get(job.get("kind"), "backups.create"),)

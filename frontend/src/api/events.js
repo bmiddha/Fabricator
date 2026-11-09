@@ -7,6 +7,7 @@ export function getActivity(serverId, before, alerts = false) {
   return get(endpoint, { ...(before ? { before } : {}), ...(!serverId && alerts ? { alerts: '1' } : {}) })
 }
 export const getNotifications = () => get('/api/notifications')
+export const getTasks = serverId => get(`/api/servers/${encodeURIComponent(serverId)}/tasks`)
 export const saveDestination = (data, id) => id
   ? put(`/api/notifications/destinations/${encodeURIComponent(id)}`, data)
   : post('/api/notifications/destinations', data)

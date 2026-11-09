@@ -83,7 +83,7 @@ _MAX_RECORDED_WARNINGS = 10
 def run_backup_async(config_id: str, *, trigger: str = "manual") -> str:
     """Spawn a daemon thread to run the backup; return its job_id."""
     job_id = progress.generate_job_id("bjb")
-    progress.update(
+    progress.start(
         job_id,
         phase="starting",
         job_id=job_id,
@@ -100,11 +100,7 @@ def run_backup_async(config_id: str, *, trigger: str = "manual") -> str:
             logger.exception("Unhandled error in backup worker")
             progress.update(job_id, phase="failed", error=str(exc))
 
-    threading.Thread(
-        target=_runner,
-        name=f"backup-run-{config_id}",
-        daemon=True,
-    ).start()
+    progress.launch(job_id, _runner, f"backup-run-{config_id}")
     return job_id
 
 
@@ -184,7 +180,7 @@ def run_adhoc_backup_async(
 ) -> str:
     """Spawn a daemon thread for an ad-hoc backup; return its job_id."""
     job_id = progress.generate_job_id("bjb")
-    progress.update(
+    progress.start(
         job_id,
         phase="starting",
         job_id=job_id,
@@ -209,11 +205,7 @@ def run_adhoc_backup_async(
             logger.exception("Unhandled error in ad-hoc backup worker")
             progress.update(job_id, phase="failed", error=str(exc))
 
-    threading.Thread(
-        target=_runner,
-        name=f"backup-adhoc-{server_id}",
-        daemon=True,
-    ).start()
+    progress.launch(job_id, _runner, f"backup-adhoc-{server_id}")
     return job_id
 
 

@@ -2,6 +2,7 @@
 import { onUnmounted, ref, watch } from 'vue'
 import Panel from './ui/Panel.vue'
 import AppButton from './ui/AppButton.vue'
+import TaskStatus from './TaskStatus.vue'
 import { getActivity } from '../api/events'
 import { useAuthStore } from '../stores/auth'
 import { eventLabel, eventTarget } from '../utils/events'
@@ -39,6 +40,7 @@ onUnmounted(() => { requestId++ })
 <template>
   <div class="activity">
     <p class="activity__intro">{{ $t('activity.description') }}</p>
+    <TaskStatus v-if="serverId" :server-id="serverId" />
     <div class="activity__toolbar">
       <label class="activity__filter"><input v-model="alertsOnly" type="checkbox" />{{ $t('activity.alertsOnly') }}</label>
       <AppButton variant="ghost" :loading="busy" @click="load()">{{ $t('activity.refresh') }}</AppButton>

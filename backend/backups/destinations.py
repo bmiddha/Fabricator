@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from collections import OrderedDict
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import tempfile
+import stat
+import threading
+import time
 from urllib.parse import urlsplit
 import uuid
 
@@ -16,6 +20,15 @@ from backend.backups import progress
 
 class DestinationError(RuntimeError):
     """Safe, actionable transfer error suitable for API/progress responses."""
+
+
+class ArchiveMissingError(DestinationError):
+    """The provider explicitly reported an absent archive object."""
+
+
+_availability_cache = OrderedDict()
+_availability_lock = threading.Lock()
+_AVAILABILITY_TTL = 60
 
 
 def _profiles():
@@ -287,20 +300,55 @@ def location(snapshot):
     return snapshot.get("filePath")
 
 
-def availability(snapshot, *, check_remote=False):
+def availability(snapshot, *, check_remote=False, budget=None):
     if not has_archive(snapshot):
         return "none", None
     if not is_remote(snapshot):
-        return ("available" if Path(snapshot["filePath"]).is_file() else "unavailable"), None
-    if not check_remote:
-        return "unchecked", None
+        try:
+            mode = Path(snapshot["filePath"]).stat().st_mode
+        except (FileNotFoundError, NotADirectoryError):
+            return "missing", "Archive file is missing. Recover it from another retained copy; the index alone cannot restore it."
+        except OSError:
+            return "unavailable", "Cannot check the archive file. Check backend storage access and retry."
+        if not stat.S_ISREG(mode):
+            return "unavailable", "The recorded archive location is not a regular file."
+        return "available", None
     try:
         destination, key = _owned(snapshot)
+        profile = _profile(destination, snapshot["serverId"])
+        if destination.get("endpointUrl", "") != profile.get("endpointUrl", ""):
+            raise DestinationError("Original S3 endpoint changed; restore the backend profile before accessing this snapshot")
+        cache_key = json.dumps([snapshot["serverId"], destination, key,
+                               snapshot.get("sha256"), snapshot.get("sizeBytes"), profile], sort_keys=True)
+        with _availability_lock:
+            cached = _availability_cache.get(cache_key)
+            if cached and time.monotonic() - cached[0] < _AVAILABILITY_TTL:
+                return cached[1], cached[2]
+        if not check_remote or (budget is not None and budget[0] <= 0):
+            return "unchecked", None
+        if budget is not None:
+            budget[0] -= 1
         with _client(destination, snapshot["serverId"]) as client:
-            head = client.head_object(Bucket=destination["bucket"], Key=key)
+            from botocore.exceptions import ClientError
+            try:
+                head = client.head_object(Bucket=destination["bucket"], Key=key)
+            except ClientError as exc:
+                if exc.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
+                    raise ArchiveMissingError(
+                        "Archive object is missing. Recover it from another retained copy; the index alone cannot restore it."
+                    ) from None
+                raise
             if (head["ContentLength"] != snapshot["sizeBytes"]
                     or head.get("Metadata", {}).get("sha256") != snapshot.get("sha256")):
                 raise DestinationError("S3 archive size or checksum metadata changed")
+    except ArchiveMissingError as exc:
+        result = ("missing", str(exc))
     except DestinationError as exc:
         return "unavailable", str(exc)
-    return "available", None
+    else:
+        result = ("available", None)
+    with _availability_lock:
+        _availability_cache[cache_key] = (time.monotonic(), *result)
+        while len(_availability_cache) > 2048:
+            _availability_cache.popitem(last=False)
+    return result

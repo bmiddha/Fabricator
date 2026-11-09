@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import AppButton from '../../components/ui/AppButton.vue'
 import BackupStatsStrip from '../../components/backups/BackupStatsStrip.vue'
+import TaskStatus from '../../components/TaskStatus.vue'
 import SnapshotsTable from '../../components/backups/SnapshotsTable.vue'
 import ManageConfigsPanel from '../../components/backups/ManageConfigsPanel.vue'
 import RestoreModeModal from '../../components/modals/RestoreModeModal.vue'
@@ -13,8 +14,6 @@ import ConfirmModal from '../../components/modals/ConfirmModal.vue'
 import { useBackupsStore } from '../../stores/backups'
 import { useAuthStore } from '../../stores/auth'
 import { useServerStore } from '../../stores/server'
-import { t, te } from '../../i18n'
-import { formatFileSize } from '../../utils/format'
 import { useCapabilities } from '../../composables/useCapabilities'
 
 const store = useBackupsStore()
@@ -42,23 +41,6 @@ const filtered = computed(() => store.filteredSnapshots)
 const busySnapshotId = computed(() => {
   if (store.activeJob?.active && store.activeJob?.kind === 'restore') return store.activeJob.snapshotId
   return null
-})
-
-const activeJobLabel = computed(() => {
-  const job = store.activeJob
-  if (!job?.active) return ''
-  const phase = job.phase || 'starting'
-  const kind = job.kind === 'restore'
-    ? t('backups.job.restore')
-    : job.kind === 'world_import'
-      ? t('backups.job.import')
-      : t('backups.job.backup')
-  const phaseKey = `backups.transfer.${phase}`
-  const label = te(phaseKey) ? t(phaseKey) : phase.replace(/_/g, ' ')
-  const bytes = ['uploading', 'downloading', 'verifying'].includes(phase) && job.total_bytes
-    ? ` · ${formatFileSize(job.transferred_bytes || 0)} / ${formatFileSize(job.total_bytes)}`
-    : ''
-  return `${kind} · ${label}${bytes}`
 })
 
 function onRestoreRequest(snapshot) {
@@ -123,7 +105,7 @@ onUnmounted(() => {
           v-if="can('worlds.import')"
           variant="ghost"
           size="md"
-          :disabled="store.activeJob?.active || store.importUploading"
+          :disabled="store.taskBusy || store.importUploading"
           @click="store.openImportWorldModal()"
         >
           {{ $t('backups.importWorld') }}
@@ -132,7 +114,7 @@ onUnmounted(() => {
           v-if="can('backups.create')"
           variant="primary"
           size="md"
-          :disabled="store.activeJob?.active"
+          :disabled="store.taskBusy"
           @click="store.openQuickBackupModal()"
         >
           {{ $t('backups.quickBackup') }}
@@ -147,11 +129,9 @@ onUnmounted(() => {
     <BackupStatsStrip v-if="can('backups.list')" :summary="store.summary" :loading="store.summaryLoading" />
 
     <!-- Active job pill -->
-    <div v-if="store.activeJob?.active" class="backups-page__job">
-      <span class="backups-page__job-dot" aria-hidden="true"></span>
-      <span class="backups-page__job-label">{{ activeJobLabel }}</span>
-      <span class="backups-page__job-hint">{{ $t('backups.polling') }}</span>
-    </div>
+    <TaskStatus :server-id="String(serverStore.currentServerId || '')"
+      :actions="['backups.create', 'worlds.restore', 'worlds.import']"
+      @update="store.syncTasks" @unavailable="store.markTasksUnavailable" />
 
     <!-- Retained files banner (after non-purge delete) -->
     <div v-if="store.retainedFilesBanner" class="backups-page__retained">
@@ -225,6 +205,7 @@ onUnmounted(() => {
       :configs-by-id="configsById"
       :server-id="serverStore.currentServerId"
       :busy-snapshot-id="busySnapshotId"
+      :task-busy="store.taskBusy"
       :loading="store.snapshotsLoading"
       @restore="onRestoreRequest"
       @delete="onSnapshotDeleteRequest"
@@ -333,41 +314,6 @@ onUnmounted(() => {
 .backups-page__top-actions {
   display: flex;
   gap: var(--space-2);
-}
-
-.backups-page__job {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 6px var(--space-3);
-  background: var(--bg-secondary);
-  border: 1px solid var(--primary);
-  border-radius: var(--radius-pill);
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-  width: max-content;
-}
-
-.backups-page__job-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--primary);
-  animation: backups-pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes backups-pulse {
-  0%, 100% { opacity: 0.55; }
-  50%      { opacity: 1; }
-}
-
-.backups-page__job-label {
-  text-transform: capitalize;
-  color: var(--text-primary);
-}
-
-.backups-page__job-hint {
-  color: var(--text-muted);
 }
 
 .backups-page__retained {

@@ -1,4 +1,49 @@
 {
+  "tasks": {
+    "title": "Task status",
+    "loading": "Checking task status…",
+    "unavailable": "Task status unavailable. Retrying automatically; last known status is not completion.",
+    "stale": "No recent update; completion is not confirmed",
+    "truncated": "Only the most recent task records are shown.",
+    "elapsed": "{seconds}s elapsed",
+    "otherStage": "In progress · {stage}",
+    "actions": {
+      "backups_create": "Backup",
+      "worlds_restore": "Restore",
+      "worlds_import": "World import",
+      "worlds_copy": "World copy",
+      "server_fork": "Instance fork",
+      "server_install": "Server installation",
+      "server_upgrade": "Server upgrade",
+      "modpacks_install": "Server-pack installation"
+    },
+    "phases": {
+      "queued": "Queued",
+      "starting": "Starting",
+      "flushing": "Saving world data",
+      "stopping_server": "Stopping server",
+      "staging": "Preparing files",
+      "archiving": "Creating archive",
+      "uploading": "Uploading archive",
+      "downloading": "Downloading and verifying archive",
+      "verifying": "Verifying remote archive",
+      "publishing_metadata": "Publishing recovery metadata",
+      "finalizing": "Finalizing backup",
+      "restarting": "Restarting server",
+      "safety_snapshot": "Creating safety archive",
+      "extracting": "Extracting archive",
+      "converting": "Preparing world layout",
+      "overlaying": "Applying restored files",
+      "swapping": "Replacing files",
+      "done": "Completed",
+      "completed": "Completed",
+      "failed": "Failed",
+      "error": "Failed",
+      "cancelled": "Cancelled",
+      "interrupted": "Interrupted by backend restart; check retained files before retrying",
+      "unknown": "Outcome unavailable"
+    }
+  },
   "s3Recovery": {
     "title": "Recover an instance from S3",
     "open": "Recover from an S3 backup",
@@ -1772,7 +1817,8 @@
     "checkRemote": "Check S3 availability",
     "availability": {
       "available": "Available",
-      "unavailable": "Unavailable",
+      "unavailable": "Cannot verify archive",
+      "missing": "Archive missing",
       "unchecked": "Not checked",
       "none": "No archive"
     },

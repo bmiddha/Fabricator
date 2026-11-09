@@ -128,6 +128,45 @@ already deleted earlier snapshots; the remaining config and failed records
 stay available. Deleting a config without purging retains its snapshots and
 their locations so they remain restorable/deletable.
 
+## Task status and archive availability
+
+The Backups and server Activity pages show shared, backend-authoritative task
+status: operation/server, queued or running stage, elapsed time and recent
+terminal outcomes. Transfer bars appear only for measured byte counters;
+archive preparation/restoration stages are indeterminate. Refresh or navigation
+rediscovers active work from the existing durable activity journal. Backend
+restart marks unfinished tasks **interrupted**, not completed. Stale updates and
+lost contact are explicit; polling retries without treating disappearance as
+success. Backup/world submissions are reserved before worker launch to reject
+duplicate starts with HTTP 409, and the UI blocks duplicate acceptance requests.
+
+Task summaries contain only allowlisted stage/identity/counter fields, not raw
+worker errors, file paths, credentials or actors. Listing requires server-view
+access plus the operation's permissions or activity-read access; cross-server
+operations require access to both scopes. This activity-derived endpoint remains
+unavailable to MCP bearer tokens. Auth changes clear retained frontend state and
+late responses cannot repopulate another session/server. The status API returns
+up to 100 active/recent records; the compact UI shows active work and three recent
+terminal records. Terminal task summaries are shown for 24 hours; the activity
+timeline retains its existing bounded journal history.
+
+Indexed snapshots are not deleted when their archives disappear. A warning
+triangle and **Archive missing** label identify confirmed local absence or an
+explicit S3 missing-object response; restore/download are unavailable for those
+entries. Keep the metadata for investigation, and recover bytes from another
+retained copy before restoring. An index entry cannot reconstruct a deleted
+archive. Permission/credential/provider errors or invalid archive metadata are
+**Cannot verify archive**, not missing. Unchecked objects retain a distinct
+question-mark indicator; ordinary lists do not issue remote HEAD requests.
+
+**Check S3 availability** performs at most 20 uncached object checks per request.
+Verified/missing remote results are cached for 60 seconds in a bounded cache,
+with backend profile grants revalidated before reuse. Remaining objects stay
+unchecked; repeat the check to advance through additional entries. Failed checks
+are not cached as absence. Backend restore/download still verify actual bytes
+and do not rely on cached availability. Hover an archive's status/recovery text
+for its complete explanation; accessible text also accompanies the icons.
+
 ## Failure, crash and recovery
 
 Ordinary transfer failures clean up local transfer files; download temporary

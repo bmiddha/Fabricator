@@ -358,3 +358,8 @@ def test_adhoc_backup_async_returns_job_id(backups_env, monkeypatch, tmp_path):
     state = progress.get(job_id)
     assert state["kind"] == "backup"
     assert state["config_id"] is None
+    import time
+    deadline = time.monotonic() + 5
+    while progress.is_active(job_id) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not progress.is_active(job_id), "Worker must finish before isolated fixture teardown"

@@ -172,7 +172,12 @@ export const useBackupsStore = defineStore('backups', () => {
   // `targetConfigId` and `targetSnapshotId` are nullable hints used by the
   // page to disable destructive actions on the row(s) currently in flight.
   const activeJob = ref(null)
+  const tasksUnavailable = ref(true)
+  const submittingJob = ref(false)
+  const taskBusy = computed(() => tasksUnavailable.value || submittingJob.value
+    || Boolean(activeJob.value?.active))
   let jobPollTimerId = null
+  const pendingJobPolls = new Set()
 
   // Per-config "running now" indicator (set when user clicks Back up now)
   const runningConfigId = ref(null)
@@ -404,7 +409,8 @@ export const useBackupsStore = defineStore('backups', () => {
   async function runBackup(configId) {
     const isCurrent = requestScope()
     if (!serverId.value || !configId) return
-    if (runningConfigId.value) return // one manual run at a time per view
+    if (runningConfigId.value || taskBusy.value) return
+    submittingJob.value = true
     runningConfigId.value = configId
     try {
       const res = await runBackupConfig(serverId.value, configId)
@@ -429,9 +435,10 @@ export const useBackupsStore = defineStore('backups', () => {
       console.error('Failed to start backup:', err)
       toast.error(err?.message || t('backups.job.startFailed'), t('nav.backups'))
     } finally {
+      if (isCurrent()) submittingJob.value = false
       // runningConfigId is cleared when polling finalises; the disable
       // happens during the active poll loop, not just the initial POST.
-      if (!activeJob.value?.active) runningConfigId.value = null
+      if (isCurrent() && !activeJob.value?.active) runningConfigId.value = null
     }
   }
 
@@ -448,7 +455,8 @@ export const useBackupsStore = defineStore('backups', () => {
 
   async function runQuickBackup({ storagePath, compress, flush, shutdown }) {
     const isCurrent = requestScope()
-    if (!serverId.value) return
+    if (!serverId.value || taskBusy.value) return
+    submittingJob.value = true
     try {
       const res = await runQuickBackupApi(serverId.value, { storagePath, compress, flush, shutdown })
       if (!isCurrent()) return
@@ -472,6 +480,8 @@ export const useBackupsStore = defineStore('backups', () => {
       if (!isCurrent()) return
       console.error('Failed to start quick backup:', err)
       toast.error(err?.message || t('backups.job.quickStartFailed'), t('nav.backups'))
+    } finally {
+      if (isCurrent()) submittingJob.value = false
     }
   }
 
@@ -482,7 +492,7 @@ export const useBackupsStore = defineStore('backups', () => {
   }
 
   function closeImportWorldModal() {
-    if (importUploading.value || activeJob.value?.active) return
+    if (importUploading.value || taskBusy.value) return
     showImportWorldModal.value = false
   }
 
@@ -556,7 +566,9 @@ export const useBackupsStore = defineStore('backups', () => {
 
   async function confirmRestore(mode) {
     const isCurrent = requestScope()
-    if (!serverId.value || !snapshotToRestore.value) return
+    if (!serverId.value || !snapshotToRestore.value || taskBusy.value
+        || snapshotToRestore.value.availability === 'missing') return
+    submittingJob.value = true
     const snap = snapshotToRestore.value
     try {
       const res = await restoreSnapshot(serverId.value, snap.id, mode)
@@ -583,6 +595,8 @@ export const useBackupsStore = defineStore('backups', () => {
       if (!isCurrent()) return
       console.error('Failed to start restore:', err)
       toast.error(err?.message || t('backups.job.restoreStartFailed'), t('nav.backups'))
+    } finally {
+      if (isCurrent()) submittingJob.value = false
     }
   }
 
@@ -619,6 +633,39 @@ export const useBackupsStore = defineStore('backups', () => {
 
   // ---------- Job polling ----------
 
+  function syncTasks(tasks, scopeId = serverId.value) {
+    if (scopeId !== serverId.value) return
+    tasksUnavailable.value = false
+    const current = tasks.find(task => task.active
+      && ['backups.create', 'worlds.restore', 'worlds.import'].includes(task.action))
+    if (!current) {
+      if (activeJob.value?.active) {
+        const terminal = tasks.find(task => task.job_id === activeJob.value.id && !task.active)
+        if (terminal) {
+          activeJob.value = { ...activeJob.value, ...terminal, id: terminal.job_id }
+          runningConfigId.value = null
+          stopJobPolling()
+          Promise.all([loadSnapshots(), loadSummary(), loadConfigs()])
+        } else {
+          pollJob()
+        }
+      }
+      return
+    }
+    activeJob.value = {
+      ...activeJob.value, ...current, id: current.job_id,
+      kind: current.kind || 'backup', configId: current.config_id,
+      snapshotId: current.snapshot_id,
+    }
+    runningConfigId.value = current.config_id || null
+    if (!jobPollTimerId) startJobPolling()
+  }
+
+  function markTasksUnavailable(scopeId = serverId.value) {
+    if (scopeId !== serverId.value) return
+    tasksUnavailable.value = true
+  }
+
   function startJobPolling() {
     stopJobPolling()
     if (!activeJob.value?.id) return
@@ -640,6 +687,8 @@ export const useBackupsStore = defineStore('backups', () => {
       stopJobPolling()
       return
     }
+    if (pendingJobPolls.has(job.id)) return
+    pendingJobPolls.add(job.id)
     try {
       const status = await getBackupJob(job.id)
       if (!isCurrent() || activeJob.value?.id !== job.id) return
@@ -656,10 +705,14 @@ export const useBackupsStore = defineStore('backups', () => {
           : job.kind === 'world_import'
             ? ['backups.job.importFinishedFailed', 'backups.job.importCompleted']
             : ['backups.job.backupFinishedFailed', 'backups.job.backupCompleted']
-        const phase = status?.phase || 'done'
-        if (phase === 'failed' || status?.error) {
+        const phase = status?.phase
+        if (!['done', 'completed', 'failed', 'error', 'interrupted', 'cancelled'].includes(phase)) {
+          tasksUnavailable.value = true
+          return
+        }
+        if (['failed', 'error', 'interrupted'].includes(phase) || status?.error) {
           toast.error(status?.error || t(failedKey), t('nav.backups'))
-        } else {
+        } else if (['done', 'completed'].includes(phase)) {
           toast.success(t(completedKey), t('nav.backups'))
         }
         // Refresh data once the job lands.
@@ -675,10 +728,9 @@ export const useBackupsStore = defineStore('backups', () => {
     } catch (err) {
       if (!isCurrent()) return
       console.error('Failed to poll backup job:', err)
-      // Soft-fail: stop polling rather than spam errors.
-      stopJobPolling()
-      activeJob.value = null
-      runningConfigId.value = null
+      tasksUnavailable.value = true
+    } finally {
+      pendingJobPolls.delete(job.id)
     }
   }
 
@@ -732,6 +784,8 @@ export const useBackupsStore = defineStore('backups', () => {
     importUploadPct.value = 0
     importAbort = null
     activeJob.value = null
+    tasksUnavailable.value = true
+    submittingJob.value = false
     runningConfigId.value = null
     search.value = ''
     configFilter.value = 'all'
@@ -767,6 +821,9 @@ export const useBackupsStore = defineStore('backups', () => {
     showDeleteSnapshotModal,
     deletingSnapshot,
     activeJob,
+    tasksUnavailable,
+    taskBusy,
+    submittingJob,
     runningConfigId,
     retainedFilesBanner,
     search,
@@ -810,6 +867,8 @@ export const useBackupsStore = defineStore('backups', () => {
     isJobAgainstConfig,
     configById,
     stopJobPolling,
+    syncTasks,
+    markTasksUnavailable,
     resetState
   }
 })

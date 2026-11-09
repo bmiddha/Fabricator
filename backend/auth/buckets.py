@@ -95,6 +95,7 @@ _NEVER = [
     ("POST", "/api/servers/<server_id>/diagnostics/captures"),
     ("GET", "/api/activity"),
     ("GET", "/api/servers/<server_id>/activity"),
+    ("GET", "/api/servers/<server_id>/tasks"),
     ("GET", "/api/servers/<server_id>/alerts"),
     ("GET", "/api/notifications"),
     ("POST", "/api/notifications/destinations"),

@@ -70,7 +70,7 @@ def run_restore_async(snapshot_id: str, *, mode: str) -> str:
         raise ValueError(f"Snapshot {snapshot_id!r} not found")
 
     job_id = progress.generate_job_id("bjr")
-    progress.update(
+    progress.start(
         job_id,
         phase="starting",
         job_id=job_id,
@@ -87,11 +87,7 @@ def run_restore_async(snapshot_id: str, *, mode: str) -> str:
             logger.exception("Unhandled error in restore worker")
             progress.update(job_id, phase="failed", error=str(exc))
 
-    threading.Thread(
-        target=_runner,
-        name=f"backup-restore-{snapshot_id}",
-        daemon=True,
-    ).start()
+    progress.launch(job_id, _runner, f"backup-restore-{snapshot_id}")
     return job_id
 
 

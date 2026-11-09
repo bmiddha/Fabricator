@@ -195,7 +195,7 @@ def run_world_import_async(
 ) -> str:
     """Spawn a daemon thread to import ``archive_path`` onto ``server_id``."""
     job_id = progress.generate_job_id("bjw")
-    progress.update(
+    progress.start(
         job_id,
         phase="starting",
         job_id=job_id,
@@ -216,11 +216,7 @@ def run_world_import_async(
             logger.exception("Unhandled error in world-import worker")
             progress.update(job_id, phase="failed", error=str(exc))
 
-    threading.Thread(
-        target=_runner,
-        name=f"world-import-{server_id}",
-        daemon=True,
-    ).start()
+    progress.launch(job_id, _runner, f"world-import-{server_id}")
     return job_id
 
 

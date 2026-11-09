@@ -71,6 +71,13 @@ def connection():
         db.row_factory = sqlite3.Row
         try:
             db.executescript(_SCHEMA)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(jobs)")}
+            for name, definition in (
+                ("phase", "TEXT"), ("updated", "REAL"),
+                ("details", "TEXT NOT NULL DEFAULT '{}'"), ("related_server", "TEXT"),
+            ):
+                if name not in columns:
+                    db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {definition}")
             with db:
                 yield db
         finally:
@@ -177,20 +184,20 @@ def emit(action, *, server_id=None, outcome="succeeded", alert=None, who=None, r
 
 
 @best_effort
-def track_job(key, server_id, action, phase, *, ref=None, related_server=None, restart_error=False):
+def track_job(key, server_id, action, phase, *, ref=None, related_server=None, restart_error=False, details=None):
     """Capture actor on submission and terminal outcome once, across worker threads."""
-    if not phase and not restart_error:
+    if not phase and not restart_error and not details:
         return
     with connection() as db:
         row = db.execute("SELECT * FROM jobs WHERE key=?", (key,)).fetchone()
-        terminal = phase in {"done", "failed", "completed", "error", "cancelled"}
+        terminal = phase in {"done", "failed", "completed", "error", "cancelled", "interrupted"}
         if row is None or (row["terminal"] and phase in {"starting", "queued"}):
             if phase == "queued" and row and row["terminal"]:
                 # Queue notifications may be repeated by a worker after its
                 # submitter; only explicit install keys are reused across runs.
                 if not key.startswith(("install:", "modpack:")):
                     return
-            db.execute("INSERT OR REPLACE INTO jobs VALUES(?,?,?,?,?,?,0)",
+            db.execute("INSERT OR REPLACE INTO jobs(key,run_id,server_id,action,actor,at,terminal) VALUES(?,?,?,?,?,?,0)",
                        (key, uuid.uuid4().hex, server_id, action, json.dumps(actor()), time.time()))
             row = db.execute("SELECT * FROM jobs WHERE key=?", (key,)).fetchone()
         if not row["server_id"] and server_id:
@@ -202,9 +209,23 @@ def track_job(key, server_id, action, phase, *, ref=None, related_server=None, r
                 _insert(db, server_id=row["server_id"], action="server.restart", outcome="failed",
                         who=json.loads(row["actor"]), alert="job.failed", ref=ref)
             return
+        safe_details = json.loads(row["details"])
+        for name in ("kind", "config_id", "snapshot_id", "mode", "total_bytes", "transferred_bytes"):
+            value = (details or {}).get(name)
+            if name.endswith("_bytes"):
+                if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 2**63 - 1:
+                    safe_details[name] = value
+            elif isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", value):
+                safe_details[name] = value
+        if phase is not None and not re.fullmatch(r"[a-z][a-z0-9_-]{0,79}", phase):
+            raise ValueError("Invalid task phase")
+        db.execute("UPDATE jobs SET phase=COALESCE(?,phase),updated=?,details=?,related_server=COALESCE(?,related_server) WHERE key=?",
+                   (phase, time.time(), json.dumps(safe_details), related_server, key))
         if terminal:
-            failed = phase in {"failed", "error"} or restart_error
-            outcome = "failed" if failed else "skipped" if phase == "cancelled" else "succeeded"
+            failed = phase in {"failed", "error", "interrupted"} or restart_error
+            outcome = "interrupted" if phase == "interrupted" else (
+                "failed" if failed else "skipped" if phase == "cancelled" else "succeeded"
+            )
             who = json.loads(row["actor"])
             alert = ("backup.failed" if row["action"] == "backups.create" else "job.failed") if failed else None
             _insert(db, server_id=row["server_id"], action=row["action"],
@@ -222,8 +243,45 @@ def recover():
         for row in db.execute("SELECT * FROM jobs WHERE terminal=0").fetchall():
             _insert(db, server_id=row["server_id"], action=row["action"], outcome="interrupted",
                     who=json.loads(row["actor"]), alert="backup.failed" if row["action"] == "backups.create" else "job.failed")
-        db.execute("UPDATE jobs SET terminal=1 WHERE terminal=0")
+        db.execute("UPDATE jobs SET terminal=1,phase='interrupted',updated=? WHERE terminal=0", (time.time(),))
         _prune(db, time.time())
+
+
+def _task(row):
+    now = time.time()
+    phase = row["phase"] or ("unknown" if row["terminal"] else "queued")
+    updated = row["updated"] or row["at"]
+    kind = {
+        "backups.create": "backup", "worlds.restore": "restore",
+        "worlds.import": "world_import", "server.fork": "fork", "worlds.copy": "world-copy",
+    }.get(row["action"])
+    return {
+        "kind": kind, **json.loads(row["details"]), "id": row["run_id"], "key": row["key"],
+        "job_id": row["key"].split(":", 1)[-1], "server_id": row["server_id"],
+        "related_server": row["related_server"], "action": row["action"],
+        "phase": phase, "active": not bool(row["terminal"]),
+        "started_at": row["at"], "updated_at": updated,
+        "elapsed_seconds": max(0, (now if not row["terminal"] else updated) - row["at"]),
+        "stale": not bool(row["terminal"]) and now - updated > 120,
+    }
+
+
+def tasks(server_id, *, limit=100):
+    with connection() as db:
+        _prune(db, time.time())
+        rows = db.execute(
+            "SELECT * FROM jobs WHERE (server_id=? OR related_server=?) "
+            "AND (terminal=0 OR COALESCE(updated,at)>?) "
+            "ORDER BY terminal,COALESCE(updated,at) DESC LIMIT ?",
+            (server_id, server_id, time.time() - 86400, limit + 1),
+        ).fetchall()
+    return {"items": [_task(row) for row in rows[:limit]], "truncated": len(rows) > limit}
+
+
+def task(key):
+    with connection() as db:
+        row = db.execute("SELECT * FROM jobs WHERE key=?", (key,)).fetchone()
+    return _task(row) if row else None
 
 
 @best_effort

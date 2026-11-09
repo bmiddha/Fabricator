@@ -30,7 +30,8 @@ const props = defineProps({
   loading: {
     type: Boolean,
     default: false
-  }
+  },
+  taskBusy: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['restore', 'delete'])
@@ -52,6 +53,9 @@ function formatDuration(seconds) {
 }
 
 function statusMeta(snap) {
+  if (snap.availability === 'missing') return { dot: 'var(--warning)', label: t('backups.availability.missing'), icon: 'missing' }
+  if (snap.availability === 'unavailable') return { dot: 'var(--warning)', label: t('backups.availability.unavailable'), icon: 'unknown' }
+  if (snap.availability === 'unchecked') return { dot: 'var(--text-secondary)', label: t('backups.availability.unchecked'), icon: 'unknown' }
   // Backend marks status as success | warning | error
   if (snap.status === 'error') return { dot: 'var(--danger)', label: t('backups.table.statusFailed') }
   if (snap.status === 'warning') return { dot: 'var(--warning)', label: t('backups.table.statusWarning') }
@@ -97,11 +101,18 @@ function downloadHref(snap, format = 'tar') {
           :class="{ 'is-busy': props.busySnapshotId === snap.id }"
         >
           <td class="snapshots-table__td-status">
-            <span
+            <svg v-if="statusMeta(snap).icon" width="16" height="16" viewBox="0 0 16 16"
+              fill="none" :stroke="statusMeta(snap).dot" stroke-width="1.5" role="img"
+              :aria-label="statusMeta(snap).label">
+              <title>{{ statusMeta(snap).label }}</title>
+              <path v-if="statusMeta(snap).icon === 'missing'" d="M8 1.5l7 12H1l7-12zM8 6v3m0 2v1" />
+              <g v-else><circle cx="8" cy="8" r="6" /><path d="M6 6a2 2 0 114 0c0 1-2 1-2 3m0 2v1" /></g>
+            </svg>
+            <span v-else
               class="snapshots-table__dot"
               :style="{ background: statusMeta(snap).dot }"
               :title="statusMeta(snap).label"
-              aria-hidden="true"
+              role="img" :aria-label="statusMeta(snap).label"
             ></span>
           </td>
           <td class="snapshots-table__td-name">
@@ -110,7 +121,7 @@ function downloadHref(snap, format = 'tar') {
               {{ snap.destination?.type === 's3' ? $t('backups.config.s3') : $t('backups.config.local') }}
               &middot; {{ $t(`backups.availability.${snap.availability || 'unchecked'}`) }}
             </div>
-            <div v-if="snap.availabilityError" class="snapshots-table__msg" role="status">{{ snap.availabilityError }}</div>
+            <div v-if="snap.availabilityError" class="snapshots-table__msg" :title="snap.availabilityError" role="status">{{ snap.availabilityError }}</div>
             <div v-if="snap.message" class="snapshots-table__msg" :title="snap.message">{{ snap.message }}</div>
           </td>
           <td class="snapshots-table__td-config">{{ configName(snap.configId) }}</td>
@@ -128,7 +139,7 @@ function downloadHref(snap, format = 'tar') {
                 v-if="can('backups.restore') && (snap.filePath || snap.objectKey)"
                 type="button"
                 class="snapshots-table__action"
-                :disabled="props.busySnapshotId === snap.id || snap.availability === 'unavailable'"
+                :disabled="props.taskBusy || props.busySnapshotId === snap.id || ['missing', 'unavailable'].includes(snap.availability)"
                 :title="$t('backups.table.restore')"
                 @click="emit('restore', snap)"
               >
@@ -139,7 +150,7 @@ function downloadHref(snap, format = 'tar') {
                 <span>{{ $t('backups.table.restore') }}</span>
               </button>
               <a
-                v-if="can('backups.download') && (snap.filePath || snap.objectKey) && snap.availability !== 'unavailable'"
+                v-if="can('backups.download') && (snap.filePath || snap.objectKey) && !['missing', 'unavailable'].includes(snap.availability)"
                 class="snapshots-table__action"
                 :href="downloadHref(snap, 'tar')"
                 :title="$t('backups.table.download', { name: snap.fileName || snap.id })"
@@ -152,7 +163,7 @@ function downloadHref(snap, format = 'tar') {
                 <span>.tar</span>
               </a>
               <a
-                v-if="can('backups.download') && (snap.filePath || snap.objectKey) && snap.availability !== 'unavailable'"
+                v-if="can('backups.download') && (snap.filePath || snap.objectKey) && !['missing', 'unavailable'].includes(snap.availability)"
                 class="snapshots-table__action snapshots-table__action--secondary"
                 :href="downloadHref(snap, 'zip')"
                 :title="$t('backups.table.downloadZip')"

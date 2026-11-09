@@ -2,6 +2,7 @@
 from flask import Blueprint, jsonify, request
 
 from backend.events import service, store
+from backend.auth.permissions import can
 from backend.utils.routes import require_server
 
 events_bp = Blueprint("events", __name__, url_prefix="/api")
@@ -38,6 +39,35 @@ def instance_activity():
 @require_server
 def server_activity(server_id, server):
     return _history(server_id)
+
+
+@events_bp.get("/servers/<server_id>/tasks")
+@require_server
+def server_tasks(server_id, server):
+    result = store.tasks(server_id)
+    def visible(task):
+        permission = "backups.restore" if task["action"] == "worlds.restore" else task["action"]
+        scopes = {sid for sid in (task["server_id"], task["related_server"]) if sid}
+        if any(not can("server.view", sid) for sid in scopes):
+            return False
+        if all(can("activity.read", sid) for sid in scopes):
+            return True
+        if permission == "worlds.copy":
+            return can("worlds.read", task["server_id"]) and all(
+                can(p, task["related_server"]) for p in ("worlds.import", "backups.create")
+            )
+        if permission == "server.fork":
+            return can("servers.create") and all(
+                can(p, task["server_id"]) for p in ("server.fork", "files.read", "server.settings.read")
+            )
+        return all(can(permission, sid)
+                   or (permission == "server.install" and can("server.upgrade", sid))
+                   for sid in scopes)
+    result["items"] = [
+        {**task, "server_name": server.get("name") or server_id}
+        for task in result["items"] if visible(task)
+    ]
+    return jsonify(result)
 
 
 @events_bp.get("/servers/<server_id>/alerts")

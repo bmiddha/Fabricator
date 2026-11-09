@@ -57,6 +57,11 @@ logger = logging.getLogger(__name__)
 backups_bp = Blueprint("backups", __name__, url_prefix="/api")
 
 
+@backups_bp.errorhandler(progress.JobBusyError)
+def busy_task(error):
+    return jsonify({"error": str(error)}), 409
+
+
 # ---------------------------------------------------------------------------
 # Configs
 # ---------------------------------------------------------------------------
@@ -172,9 +177,11 @@ def delete_backup_config(server_id, server, config_id):
 @require_server
 def list_server_snapshots(server_id, server):
     snapshots = storage.list_snapshots(server_id)
+    budget = [20]
     for snapshot in snapshots:
         state, error = destinations.availability(
-            snapshot, check_remote=bool_from_str(request.args.get("check_remote"))
+            snapshot, check_remote=bool_from_str(request.args.get("check_remote")),
+            budget=budget,
         )
         snapshot["availability"] = state
         snapshot["availabilityError"] = error
@@ -399,18 +406,22 @@ def import_world(server_id, server):
         temp_path.unlink(missing_ok=True)
         return jsonify({"error": str(exc)}), 400
 
-    job_id = world_import.run_world_import_async(
-        server_id, temp_path, original_name=safe_display
-    )
+    try:
+        job_id = world_import.run_world_import_async(
+            server_id, temp_path, original_name=safe_display
+        )
+    except (progress.JobBusyError, RuntimeError):
+        temp_path.unlink(missing_ok=True)
+        raise
     return jsonify({"success": True, "job_id": job_id}), 202
 
 
 @backups_bp.route("/backup-jobs/<job_id>", methods=["GET"])
 def get_backup_job(job_id):
-    payload = progress.get(job_id)
+    payload = progress.get_status(job_id)
     if not payload or payload.get("kind") in {"fork", "world-copy"}:
         return jsonify({"error": "Job not found"}), 404
-    return jsonify({"active": progress.is_active(job_id), **payload})
+    return jsonify(payload)
 
 
 # ---------------------------------------------------------------------------
