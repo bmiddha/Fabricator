@@ -738,6 +738,10 @@ class ModrinthClient:
         _report("verifying_mod_sides")
         self._apply_modrinth_side_metadata(
             install_path, result, normalized_overrides, loader=loader,
+            required_server_paths={
+                entry["path"] for entry in index.get("files", [])
+                if entry.get("env", {}).get("server") == "required"
+            },
         )
 
         dependencies = index.get("dependencies") or {}
@@ -1099,16 +1103,14 @@ class ModrinthClient:
         result: Dict[str, Any],
         overrides: Dict[str, str],
         loader: Optional[str] = None,
+        required_server_paths: Optional[set[str]] = None,
     ) -> List[str]:
         """Re-judge every installed mod jar against Modrinth's own metadata.
 
-        Runs once, after the index files and overrides are on disk, and
-        outranks everything that put them there: index ``env``, jar manifests,
-        and the constant-pool scan are all inference, while Modrinth's
-        ``environment`` field is the author's own statement of where the mod
-        runs (see :mod:`backend.modrinth.environment`). A jar Modrinth calls
-        client-only is removed no matter how it got installed — that is
-        issue #64.
+        Runs after index files and overrides are on disk. Catalog-side
+        metadata normally wins, but a universal Fabric JAR with common code
+        can be a required server dependency despite its project-level tag.
+        Treat that conflict as soft, not proof that the dependent cannot run.
 
         A user override still wins: someone who explicitly asked for a mod on
         the server gets it, since only they know what they are building.
@@ -1121,15 +1123,19 @@ class ModrinthClient:
         Returns the paths it removed; ``result`` is updated in place.
         """
         hashes_by_path: Dict[str, str] = {}
+        targets_by_path: Dict[str, Path] = {}
+        forced_server: set[str] = set()
         for entry_path in result.get("files_installed", []):
             relative = self._strip_override_prefix(entry_path)
             lowered = relative.lower()
             if not (lowered.startswith("mods/") and lowered.endswith(".jar")):
                 continue
-            if self._forced_side(overrides, entry_path, relative) == "server":
-                continue
             target = (install_path / relative).resolve()
             if not is_within(install_path, target) or not target.is_file():
+                continue
+            targets_by_path[entry_path] = target
+            if self._forced_side(overrides, entry_path, relative) == "server":
+                forced_server.add(entry_path)
                 continue
             digest = file_sha1(target)
             if digest:
@@ -1151,25 +1157,53 @@ class ModrinthClient:
         # Removing a mod can strand another that requires it, so the graph
         # decides who actually goes — see modmeta.resolve_removals.
         identities = {
-            path: modmeta.read_identity(
-                (install_path / self._strip_override_prefix(path)).resolve(), loader
-            )
-            for path in hashes_by_path
+            path: modmeta.read_identity(target, loader)
+            for path, target in targets_by_path.items()
         }
         hard = {p for p, v in sides.items() if v.side == "client" and not v.is_soft}
         soft = {p for p, v in sides.items() if v.side == "client" and v.is_soft}
-        to_remove, spared = modmeta.resolve_removals(identities, hard, soft)
+        universal = {
+            path for path in hard
+            if sides[path].tag in ("", "client_only")
+            and modmeta.jar_has_common_fabric_entrypoint(targets_by_path[path], loader)
+        }
+        hard -= universal
+        required_paths = required_server_paths or set()
+        required_universal = {
+            path for path in universal
+            if self._strip_override_prefix(path) in required_paths
+        }
+        # Required universal files are not optional removals, but still take
+        # part in hard dependency cascades. Only a user override is immune.
+        soft |= universal - required_universal
+        to_remove, spared = modmeta.resolve_removals(identities, hard, soft, forced_server)
 
-        for entry_path in sorted(spared):
-            logger.info(
-                "modrinth: keeping %s despite %s — a mod being installed requires it",
-                entry_path, sides[entry_path].reason,
-            )
+        for entry_path in sorted(spared | (required_universal - to_remove)):
+            if entry_path in universal:
+                logger.warning(
+                    "modrinth: keeping required universal Fabric mod %s despite conflicting %s",
+                    entry_path, sides[entry_path].reason,
+                )
+            else:
+                logger.info(
+                    "modrinth: keeping %s despite %s — a mod being installed requires it",
+                    entry_path, sides[entry_path].reason,
+                )
 
+        removed_ids = {
+            mod_id for path in to_remove for mod_id in identities[path].provides
+        }
+        for entry_path in sorted(forced_server):
+            missing = identities[entry_path].requires & removed_ids
+            if missing:
+                reason = "Required dependencies removed: " + ", ".join(sorted(missing))
+                result["uncertain_mod_files"].append({"path": entry_path, "reason": reason})
+                logger.warning("modrinth: explicit server mod %s has %s", entry_path, reason)
         removed: List[str] = []
         for entry_path in sorted(to_remove):
-            reason = sides[entry_path].reason if entry_path in sides else (
-                "requires a mod that cannot run on a dedicated server"
+            reason = sides[entry_path].reason if entry_path in hard | soft else (
+                "Required dependencies removed: "
+                + ", ".join(sorted(identities[entry_path].requires & removed_ids))
             )
             relative = self._strip_override_prefix(entry_path)
             target = (install_path / relative).resolve()
@@ -1385,7 +1419,9 @@ class ModrinthClient:
     def _classify_fabric(self, raw: bytes) -> Tuple[str, str]:
         try:
             mod_meta = json.loads(raw)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return "uncertain", "Failed to parse mod metadata"
+        if not isinstance(mod_meta, dict):
             return "uncertain", "Failed to parse mod metadata"
 
         environment = str(mod_meta.get("environment") or "").strip().lower()
@@ -1395,6 +1431,8 @@ class ModrinthClient:
             return "client", "environment=client"
         if environment == "server":
             return "server", "environment=server"
+        if modmeta.fabric_has_common_entrypoint(mod_meta):
+            return "server", "Universal Fabric environment with common entrypoint"
         if "client" in entrypoints and "server" not in entrypoints and "main" not in entrypoints:
             return "client", "Only client entrypoint declared"
         if "server" in entrypoints and "client" not in entrypoints:

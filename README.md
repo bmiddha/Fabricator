@@ -14,6 +14,16 @@
 - **Staged modpack updates** — [review mod/config changes, fork an isolated test instance, opt in to a startup check, then explicitly approve backup-gated production changes](deploy/modpack-updates/README.md). Promotion never copies a staging world; runtime migrations remain separate.
 - **Private live maps** — [BlueMap viewer and global-only Balm Waystones markers](deploy/maps/README.md), initially scoped to COBBLEVERSE 1.7.42 (Fabric 1.21.1). Explicit setup, resource-download consent and an operator-controlled restart are required; full live game-server acceptance is still pending.
 
+### Server pack imports
+
+Universal Fabric mods with common entrypoints can bundle client UI classes
+without being client-only. Imports retain required universal files and hard
+dependencies when project-side catalog tags conflict, logging the conflict.
+Explicit client-only declarations, unsupported server entries and disabled
+filenames remain filtered or disabled. An explicit server-side choice still
+participates in dependency checks; incompatible removed dependencies produce a
+compatibility warning rather than being silently ignored.
+
 
 <div align="center">
 

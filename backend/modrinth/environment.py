@@ -24,6 +24,12 @@ so a repackaged or renamed jar cannot be mistaken for something else. Results
 flow through the same caches the mods page uses (:mod:`backend.modrinth.installed`),
 which makes a whole pack cost about two requests.
 
+Project-side tags do not describe every version's loader wiring. The installer
+reconciles a client-only tag with universal Fabric common entrypoints before
+removing required server files or their dependencies; such conflicts are logged.
+Explicit client-only loader metadata and multiplayer-incompatible tags are not
+softened by that reconciliation.
+
 Nothing here is allowed to break an install. Modrinth being down, rate
 limited, or simply not knowing a jar all resolve to "uncertain", which leaves
 the existing jar heuristics in charge exactly as before.

@@ -95,6 +95,23 @@ def test_unreadable_jar_is_neutral(tmp_path):
     assert modmeta.read_identity(jar, "neoforge") == ModIdentity.empty()
 
 
+@pytest.mark.parametrize("metadata,expected", [
+    ({"environment": "*", "entrypoints": {"main": ["example.Common"]}}, True),
+    ({"entrypoints": {"main": [{"value": "example.Common", "adapter": "custom"}]}}, True),
+    ({"environment": "client", "entrypoints": {"main": ["example.Common"]}}, False),
+    ({"environment": "*", "entrypoints": {"client": ["example.Client"]}}, False),
+    ({"environment": "*", "entrypoints": {"main": []}}, False),
+    ({"environment": "*", "entrypoints": {"main": [""]}}, False),
+    ({"environment": "*", "entrypoints": {"main": [42]}}, False),
+    ({"environment": "*", "entrypoints": {"main": [{"value": 42}]}}, False),
+    ({"environment": "*", "entrypoints": {"main": "example.Common"}}, False),
+    ({"environment": "*", "entrypoints": []}, False),
+    ([], False),
+])
+def test_common_fabric_entrypoint_requires_valid_universal_metadata(metadata, expected):
+    assert modmeta.fabric_has_common_entrypoint(metadata) == expected
+
+
 # ---------------------------------------------------------------------------
 # Resolution
 # ---------------------------------------------------------------------------
@@ -186,3 +203,15 @@ def test_a_spared_mod_keeps_providing_for_the_cascade():
     assert spared == {"geckolib"}
     assert removed == {"sodium"}
     assert "server_mod" not in removed
+
+
+def test_protected_dependent_remains_in_soft_dependency_graph():
+    identities = _ids(
+        application=({"application"}, {"library"}),
+        library=({"library"}, set()),
+    )
+    removed, spared = modmeta.resolve_removals(
+        identities, set(), {"library"}, protected={"application"},
+    )
+    assert removed == set()
+    assert spared == {"library"}

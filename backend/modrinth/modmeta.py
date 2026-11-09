@@ -65,6 +65,42 @@ def _clean(values: Iterable[Any]) -> Set[str]:
     return out
 
 
+def fabric_has_common_entrypoint(meta: Any) -> bool:
+    """Whether Fabric declares common code in a universal environment."""
+    if not isinstance(meta, dict) or meta.get("environment", "*") != "*":
+        return False
+    entrypoints = meta.get("entrypoints")
+    if not isinstance(entrypoints, dict):
+        return False
+    main = entrypoints.get("main")
+    if not isinstance(main, list) or not main:
+        return False
+    return all(
+        (isinstance(entry, str) and bool(entry.strip()))
+        or (isinstance(entry, dict) and isinstance(entry.get("value"), str)
+            and bool(entry["value"].strip()))
+        for entry in main
+    )
+
+
+def jar_has_common_fabric_entrypoint(jar_path: Path, loader: str | None = None) -> bool:
+    """Read universal Fabric support without overruling another loader."""
+    loader_key = (loader or "").strip().lower()
+    if loader_key not in ("", "fabric", "quilt"):
+        return False
+    try:
+        with zipfile.ZipFile(jar_path) as zf:
+            names = set(zf.namelist())
+            if "fabric.mod.json" not in names:
+                return False
+            if loader_key == "quilt" and "quilt.mod.json" in names:
+                return False
+            return fabric_has_common_entrypoint(json.loads(zf.read("fabric.mod.json")))
+    except (OSError, zipfile.BadZipFile, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        logger.warning("Unable to read Fabric environment from %s: %s", jar_path, exc)
+        return False
+
+
 def read_identity(jar_path: Path, loader: str | None = None) -> ModIdentity:
     """Read ``jar_path``'s provided and required mod ids.
 
@@ -194,6 +230,7 @@ def resolve_removals(
     identities: Dict[str, ModIdentity],
     hard_client: Set[str],
     soft_client: Set[str],
+    protected: Set[str] | None = None,
 ) -> tuple[Set[str], Set[str]]:
     """Decide what actually gets removed, honouring the dependency graph.
 
@@ -208,6 +245,9 @@ def resolve_removals(
     * A **hard** removal drags its dependents out with it — a mod that cannot
       start without a client-only mod cannot start on a server either
       (``sodium``).
+
+    ``protected`` paths remain installed but still contribute dependencies,
+    so an explicit server choice cannot hide a required soft dependency.
 
     Both run to a fixed point, since sparing or removing one jar changes what
     the remaining ones require. Returns ``(removed, spared)``.
@@ -228,10 +268,11 @@ def resolve_removals(
     # it before asking who still needs the soft ones stops a mod being spared
     # on behalf of a dependent that is itself on the way out. Doomed only ever
     # grows, so this terminates.
-    doomed = set(hard_client)
+    protected = protected or set()
+    doomed = set(hard_client) - protected
     while True:
         cascade = {
-            path for path in (set(identities) - doomed)
+            path for path in (set(identities) - doomed - protected)
             if identities[path].requires & _provided(doomed)
         }
         if not cascade:
@@ -240,7 +281,7 @@ def resolve_removals(
 
     # Now cancel soft removals that a genuine survivor still requires. This
     # set only ever shrinks, so it terminates too.
-    soft_removed = set(soft_client) - doomed
+    soft_removed = set(soft_client) - doomed - protected
     while True:
         survivors = set(identities) - doomed - soft_removed
         needed = _required(survivors)
